@@ -220,3 +220,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 .idea/
+study/
+.langgraph_api

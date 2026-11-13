@@ -1,15 +1,18 @@
 from langchain_openai import ChatOpenAI
-# 用于测试
-from dotenv import load_dotenv
-load_dotenv()  # 默认加载当前目录下的 .env 文件
+from core import config as cfg
 
 def get_llm():
     llm = ChatOpenAI(
-            model="Qwen/Qwen3-Next-80B-A3B-Instruct",
-            base_url="https://api.siliconflow.cn/v1",
+            model=cfg.BASE_LLM,
+            base_url=cfg.MODEL_API_BASE_URL,
+            temperature=0.1,
         )
     return llm
 
-if __name__ == '__main__':
-    model = get_llm()
-    print(model.invoke("hello world"))
+def get_small_llm():
+    llm = ChatOpenAI(
+            model=cfg.SMALL_LLM,
+            base_url=cfg.MODEL_API_BASE_URL,
+            temperature=0.1,
+        )
+    return llm
