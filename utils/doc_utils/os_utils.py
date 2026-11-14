@@ -2,6 +2,42 @@
 
 import os
 
+# 递归获取每个文件的修改时间,取最晚的时间返回
+def get_latest_modification_time(path):
+    """递归获取目录下所有文件的最新修改时间。
+
+    目录本身不参与比较，只比较其包含的文件；空目录会忽略。
+
+    Args:
+        path: 目录或文件路径。是目录时递归取其中所有文件的最晚 mtime，
+            是文件时直接返回该文件的 mtime。
+
+    Returns:
+        float: 最晚的修改时间戳（epoch 秒）。目录下没有任何文件时返回 None。
+
+    Raises:
+        FileNotFoundError: 路径不存在时抛出。
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"路径不存在: {path}")
+
+    latest_time = None
+
+    if os.path.isfile(path):
+        return os.path.getmtime(path)
+
+    for entry in os.listdir(path):
+        entry_path = os.path.join(path, entry)
+        if os.path.isdir(entry_path):
+            # 目录 -> 递归取子树的最晚时间
+            sub_time = get_latest_modification_time(entry_path)
+        else:
+            sub_time = os.path.getmtime(entry_path)
+        if sub_time is not None and (latest_time is None or sub_time > latest_time):
+            latest_time = sub_time
+
+    return latest_time
+
 
 def get_all_files(path, all_paths=None):
     """递归获取目录下所有文件的路径集合。
@@ -30,12 +66,10 @@ def get_all_files(path, all_paths=None):
             all_paths.add(item_path)
     return all_paths  # 返回当前目录及所有子目录下的文件路径集合
 
-def list_directory(path, prefix=''):
+def list_directory(path):
     """以树形结构返回目录内容。
     Args:
-        path: 当前要遍历的目录路径
-        prefix: 当前层级的前缀字符串，用于生成缩进和连接线
-
+        path: 要遍历的目录路径
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"路径不存在: {path}")
@@ -45,14 +79,17 @@ def list_directory(path, prefix=''):
     for index, entry in enumerate(entries):
         is_last = index == len(entries) - 1
         connector = '└── ' if is_last else '├── '
-        lines.append(prefix + connector + entry)
+        lines.append(connector + entry)
         child = os.path.join(path, entry)
         if os.path.isdir(child):
+            # 递归结果不缩进，这里对子树的每一行统一加缩进
             extension = '    ' if is_last else '│   '
-            lines.append(list_directory(child, prefix + extension))
+            sub_tree = list_directory(child)
+            lines.extend(extension + line for line in sub_tree.split('\n'))
     return '\n'.join(lines)
 
 
 if __name__ == '__main__':
     print(list_directory('./'))
     print(get_all_files('./'))
+    print(get_latest_modification_time('./'))

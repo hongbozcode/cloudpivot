@@ -7,6 +7,7 @@ from utils.langchain_utils import common_utils as cu
 from utils.langchain_utils import stream_utils as su
 from content.tools import  global_tools
 from content.middleware.file_middle import FileMiddle
+from content.middleware.minio_middle import MinioMiddle
 
 class AllAgent:
 
@@ -20,7 +21,7 @@ class AllAgent:
             tools=[global_tools.get_current_time,global_tools.run_command], # 工具函数列表
             backend=FilesystemBackend(root_dir=cfg.ROOT_PATH_AGENT,virtual_mode=True),
             system_prompt=prompt,
-            middleware=[FileMiddle()]
+            middleware=[FileMiddle(),MinioMiddle()]
         )
         logger.info("AllAgent 初始化成功")
 
