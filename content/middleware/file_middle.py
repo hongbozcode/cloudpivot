@@ -9,22 +9,20 @@ from utils.doc_utils import os_utils, base64_utils
 from core import config
 from os.path import normpath
 
-class FileManagerState(AgentState):
-    file_paths: set  # 存储文件路径的集合
-    upload_files: list # 存储上传的文件
 
 class FileState(AgentState):
     before_paths:set
+    upload_files: list # 存储上传的文件
 
 
 class FileMiddle(AgentMiddleware):
     state_schema = FileState
 
     async def abefore_agent(self, state, runtime):
-        state_dict = {'file_paths': set()} # 初始化共享工作目录的文件状态
+        state_dict = {} # 初始化共享工作目录的文件状态
 
         if os.path.exists(config.ROOT_PATH_AGENT):
-            state_dict['file_paths'] = os_utils.get_all_files(config.ROOT_PATH_AGENT)
+            state_dict['before_paths'] = os_utils.get_all_files(config.ROOT_PATH_AGENT)
 
         # 接收上传文件
         upload_files = state.get('upload_files')
@@ -60,8 +58,34 @@ class FileMiddle(AgentMiddleware):
             return {'messages':[ToolMessage(content=f"当前目录结构:\n{dir_str}",tool_call_id=uuid4().hex)],"before_paths":current_paths}
         return None
 
+    def change_file_path(self,path):
+        """
+           转换文件路径为共享工作目录中的文件路径
+            # 例如：/user_upload/a.txt -> /agent_files/user_upload/a.txt
+           Args:
+               path: 原始文件路径
+           Returns:
+               str: 转换后的文件路径
+        """
+        root_dir = config.ROOT_PATH_AGENT
+        path = os.path.normpath(path)  # 规范化这个路径本身
+        if root_dir in path:  # 如果路径本身就包含了根目录，则直接返回
+            return path
+        if os.path.isabs(path):  # 判断路径是否是绝对路径
+            path = os.path.relpath(path, start='/')  # 获取相对路径
+        return os.path.normpath(os.path.join(root_dir, path))  # 与真正的工作目录路径拼接
+
+
     #不允许展示根目录，进行透明化处理
     async def awrap_tool_call(self,request,handler):
+
+        for  arg_key  in  request.tool_call['args']:
+            # 将不在文件管理后端的工具中，加上根目录前缀
+            if arg_key in ['reade_file_path']:
+                request.tool_call['args'][arg_key] = self.change_file_path(request.tool_call['args'][arg_key])
+                pass
+
+
         response =  await handler(request)
         #  替换路径，保证透明化
         content = response.content

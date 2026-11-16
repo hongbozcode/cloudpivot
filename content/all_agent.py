@@ -2,10 +2,11 @@ from deepagents import create_deep_agent
 from connection.llm import get_llm
 from deepagents.backends import FilesystemBackend # 导入FilesystemBackend
 from core import config as cfg
+from utils.doc_utils import markitdown_utils
 from utils.general_utils.loggers import logger
 from utils.langchain_utils import common_utils as cu
 from utils.langchain_utils import stream_utils as su
-from content.tools import  global_tools
+from content.tools import global_tools, read_doc_tools
 from content.middleware.file_middle import FileMiddle
 from content.middleware.minio_middle import MinioMiddle
 
@@ -15,15 +16,19 @@ class AllAgent:
         prompt = f'''
         你是一个通用智能体，
         回答用户用中文。
+        word,ppt,pdf,excel等文件优先使用  get_file_content工具
         '''
         self.agent = create_deep_agent(
             model=get_llm(), # 传一个llm
-            tools=[global_tools.get_current_time,global_tools.run_command], # 工具函数列表
+            tools=self.get_tools(), # 工具函数列表
             backend=FilesystemBackend(root_dir=cfg.ROOT_PATH_AGENT,virtual_mode=True),
             system_prompt=prompt,
             middleware=[FileMiddle(),MinioMiddle()]
         )
         logger.info("AllAgent 初始化成功")
+
+    def get_tools(self):
+        return [global_tools.get_current_time,global_tools.run_command,read_doc_tools.get_file_content]
 
 
 if __name__ == '__main__':
