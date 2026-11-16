@@ -18,11 +18,31 @@ class FileState(AgentState):
 class FileMiddle(AgentMiddleware):
     state_schema = FileState
 
+    # 目录结构变化检测排除的目录：这些目录的内容在对话过程中会被中间件持续写入，
+    # 变化不代表用户工作文件有更新，若不排除会导致每轮都误注入目录结构
+    EXCLUDED_DIRS = {'conversation_history'}
+
+    def _get_work_files(self, path):
+        """获取目录下所有文件路径集合，排除 EXCLUDED_DIRS 中的目录。"""
+        all_paths = set()
+        if not os.path.exists(path):
+            return all_paths
+        items = os.listdir(path)
+        for item in items:
+            item_path = os.path.join(path, item)
+            if os.path.isdir(item_path):
+                if item in self.EXCLUDED_DIRS:
+                    continue  # 排除的目录直接跳过
+                all_paths.update(self._get_work_files(item_path, ))
+            else:
+                all_paths.add(item_path)
+        return all_paths
+
     async def abefore_agent(self, state, runtime):
         state_dict = {} # 初始化共享工作目录的文件状态
 
         if os.path.exists(config.ROOT_PATH_AGENT):
-            state_dict['before_paths'] = os_utils.get_all_files(config.ROOT_PATH_AGENT)
+            state_dict['before_paths'] = self._get_work_files(config.ROOT_PATH_AGENT)
 
         # 接收上传文件
         upload_files = state.get('upload_files')
@@ -47,8 +67,8 @@ class FileMiddle(AgentMiddleware):
     def before_model(self, state, runtime):
         # 把目录结构添加到上下文
         #得到目录结构字符串
-        dir_str = os_utils.list_directory(path=config.ROOT_PATH_AGENT)
-        current_paths=os_utils.get_all_files(path=config.ROOT_PATH_AGENT)
+        dir_str = os_utils.list_directory(path=config.ROOT_PATH_AGENT, exclude=self.EXCLUDED_DIRS)
+        current_paths = self._get_work_files(config.ROOT_PATH_AGENT)
         logger.info(f"before_paths:{state.get('before_paths')}")
         logger.info(f"current_paths:{current_paths}")
         # 判断是否用添加到上下文

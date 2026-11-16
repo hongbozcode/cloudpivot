@@ -66,17 +66,21 @@ def get_all_files(path, all_paths=None):
             all_paths.add(item_path)
     return all_paths  # 返回当前目录及所有子目录下的文件路径集合
 
-def list_directory(path):
+def list_directory(path, exclude=None):
     """以树形结构返回目录内容。
     Args:
         path: 要遍历的目录路径
+        exclude: 需要跳过的子目录名集合（set[str]），这些目录不会出现在树中
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"路径不存在: {path}")
 
+    exclude = exclude or set()
     entries = sorted(os.listdir(path), key=lambda e: (os.path.isfile(os.path.join(path, e)), e.lower()))
     lines = []
     for index, entry in enumerate(entries):
+        if entry in exclude:
+            continue
         is_last = index == len(entries) - 1
         connector = '└── ' if is_last else '├── '
         lines.append(connector + entry)
@@ -84,7 +88,7 @@ def list_directory(path):
         if os.path.isdir(child):
             # 递归结果不缩进，这里对子树的每一行统一加缩进
             extension = '    ' if is_last else '│   '
-            sub_tree = list_directory(child)
+            sub_tree = list_directory(child, exclude)
             lines.extend(extension + line for line in sub_tree.split('\n'))
     return '\n'.join(lines)
 

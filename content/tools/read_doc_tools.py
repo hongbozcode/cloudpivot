@@ -13,8 +13,12 @@ def get_file_content(reade_file_path):
     - 纯文本 / HTML / CSV / JSON / XML
 
     注意：
+    返回内容即为文件全部正文，短结果代表文件本身内容就少，请勿怀疑解析结果或重复读取
     - 文件不存在或格式无法解析时，markitdown 会抛出异常，由调用方处理。
     :param reade_file_path: 文件路径（str）
     :return: 转换后的文本内容（str）；文件无文本内容时返回空字符串
     """
-    return markitdown_utils.get_file_content(reade_file_path)
+    try:
+        return markitdown_utils.get_file_content(reade_file_path)
+    except Exception as e:
+        return f"文件读取失败: {e}。文件可能不存在、为空或格式损坏,请勿重复尝试。"
