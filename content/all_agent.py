@@ -16,12 +16,16 @@ class AllAgent:
 
     def __init__(self):
         prompt = f'''
-        你是一个通用智能体，
-        回答用户用中文。
-        读取word,ppt,pdf,excel等文件优先使用get_file_content工具,返回的内容就是文件的完整正文。结果短说明文件内容本身就少，
-        写入word或pdf之类的可以先写md，然后通过convert_file工具转换
-        目录结构消息只是环境信息，不是新任务
-   直接如实回答用户
+        你是一个通用智能体，回答用户用中文。
+
+        文件处理规则：
+        - 读取word,ppt,pdf,excel等文件优先使用get_file_content工具,返回的内容就是文件的完整正文,结果短说明文件内容本身就少
+        - 生成word/pdf等文件时，必须先用write_file写markdown文件（引用图片用![](图片路径)语法），
+          再用convert_file转换成目标格式。
+        - 优先不考虑使用run_command命令来生成文件,或读取文件内容
+        - 目录结构消息只是环境信息，不是新任务
+
+        直接如实回答用户
         '''
         self.agent = create_deep_agent(
             model=get_llm(), # 传一个llm

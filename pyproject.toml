@@ -14,9 +14,10 @@ dependencies = [
     "langchain>=1.3",
     "langchain-openai>=1.7.4",
     "langgraph-cli[inmem]>=0.4.42",
+    "markdown",
     "markitdown[all]>=0.1.9",
     "minio>=7.2.20",
-    "pypandoc>=1.17",
+    "pypandoc-binary>=1.17",
 ]
 
 [project.scripts]

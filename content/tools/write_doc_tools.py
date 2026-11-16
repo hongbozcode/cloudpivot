@@ -3,6 +3,7 @@ from langchain.tools import tool
 
 # 导入pypandoc库，这是Python的Pandoc封装，用于调用Pandoc功能
 import pypandoc
+import os
 
 from core import config
 # 从content.utils导入runtime_util模块，并重命名为rt
@@ -13,21 +14,22 @@ from utils.general_utils.globle_utils import get_platform
 
 # 使用@tool装饰器，将此函数注册为LangChain工具
 @tool
-def convert_file(filepath, output_format):
+def convert_file(write_file_path, output_format):
     """
     转换文件格式,支持txt,md,pdf,html,docx等
+    输入md文件中可以用![](图片路径)语法嵌入图片(支持png/jpg等),图片会被打包进输出文件
     :param:
         file_path: 输入文件路径
         output_format: 输出格式 (如: 'html', 'pdf', 'docx', 'md')
     :return 输出文件路径
     """
 
-    # 生成输出文件路径：将原文件扩展名替换为输出格式的扩展名
-    # 例如：filepath="document.md", output_format="html" -> output_file="document.html"
-    output_file = filepath.replace(filepath.split('.')[-1], output_format)
+    # 生成输出文件路径：用splitext只替换扩展名，避免路径中同名子串被误替换
+    base, _ = os.path.splitext(write_file_path)
+    output_file = base + '.' + output_format
 
     # 获取输入文件的格式（扩展名）
-    input_format = filepath.split('.')[-1]
+    input_format = write_file_path.split('.')[-1]
 
     # 注释掉的日志记录代码
     # logger.info(f"开始转换文件:{filepath}")
@@ -56,7 +58,7 @@ def convert_file(filepath, output_format):
 
         # 使用pypandoc转换文件为PDF格式
         pypandoc.convert_file(
-            filepath,  # 输入文件路径
+            write_file_path,  # 输入文件路径
             output_format,  # 输出格式（'pdf'）
             outputfile=output_file,  # 输出文件路径
             format=input_format,  # 输入格式
@@ -70,7 +72,7 @@ def convert_file(filepath, output_format):
     else:
         # 非PDF格式的转换（如html、docx、md等）
         pypandoc.convert_file(
-            filepath,  # 输入文件路径
+            write_file_path,  # 输入文件路径
             output_format,  # 输出格式
             outputfile=output_file,  # 输出文件路径
             format=input_format,  # 输入格式
