@@ -19,3 +19,12 @@ MINIO_CONSOLE_PORT = os.getenv("MINIO_CONSOLE_PORT")
 
 MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME")
 USER_UPLOAD_DIR ='user_upload'
+
+WAIT_RATE_LIMIT_SEC = 90 # 等待wait_rate_limit的间隔
+WAIT_RATE_LIMIT_RETRY = 3 # 重试次数
+
+
+BASE_VLM = os.getenv("BASE_VLM")  # VLM 模型
+IMAGE_MODEL = os.getenv("IMAGE_MODEL") # 基础生图模型
+EDIT_IMAGE_MODEL = os.getenv("EDIT_IMAGE_MODEL") # 修改图像模型
+GENERATE_IMAGE_PATH = 'generate_images'  # 生成图片保存目录

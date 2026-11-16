@@ -101,7 +101,7 @@ class FileMiddle(AgentMiddleware):
 
         for  arg_key  in  request.tool_call['args']:
             # 将不在文件管理后端的工具中，加上根目录前缀
-            if arg_key in ['reade_file_path', 'write_file_path']:
+            if arg_key in ['reade_file_path', 'write_file_path','image_path', 'reference_image_path']:
                 request.tool_call['args'][arg_key] = self.change_file_path(request.tool_call['args'][arg_key])
 
 

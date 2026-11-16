@@ -16,3 +16,10 @@ def get_small_llm():
             temperature=0.1,
         )
     return llm
+
+def get_vlm():
+    vlm = ChatOpenAI(
+            model=cfg.BASE_VLM,
+            base_url=cfg.MODEL_API_BASE_URL,
+    )
+    return vlm
