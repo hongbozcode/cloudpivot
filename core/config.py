@@ -38,3 +38,6 @@ BASE_VLM = os.getenv("BASE_VLM")  # VLM 模型
 IMAGE_MODEL = os.getenv("IMAGE_MODEL") # 基础生图模型
 EDIT_IMAGE_MODEL = os.getenv("EDIT_IMAGE_MODEL") # 修改图像模型
 GENERATE_IMAGE_PATH = 'generate_images'  # 生成图片保存目录
+
+TAVILY_SEARCH_KEY = os.getenv("TAVILY_SEARCH_KEY", "").strip()
+USE_EXCEL = os.getenv("USE_EXCEL", "").strip().lower() == "true"
