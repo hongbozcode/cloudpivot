@@ -1,6 +1,36 @@
 # 需求，做一个方法，返回清晰的目录结构
 
 import os
+import stat
+from pathlib import Path, PureWindowsPath
+
+
+def resolve_within(path, root) -> Path:
+    """解析物理路径，并要求目标位于指定目录内。"""
+    path = Path(path)
+    if os.name == 'nt' and any(
+        ':' in part or PureWindowsPath(part).is_reserved()
+        for part in path.parts if part != path.anchor
+    ):
+        raise ValueError('文件路径包含无效的名称。')
+
+    root = Path(root).resolve()
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError('文件路径必须位于工作目录内。')
+    return resolved
+
+
+def is_link(path):
+    """识别符号链接和 Windows 重解析点，避免递归进入其目标。"""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        # A file can disappear between enumeration and inspection.
+        return True
+    return stat.S_ISLNK(info.st_mode) or (
+        os.name == 'nt' and bool(info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    )
 
 # 递归获取每个文件的修改时间,取最晚的时间返回
 def get_latest_modification_time(path):
@@ -28,23 +58,28 @@ def get_latest_modification_time(path):
 
     for entry in os.listdir(path):
         entry_path = os.path.join(path, entry)
-        if os.path.isdir(entry_path):
-            # 目录 -> 递归取子树的最晚时间
-            sub_time = get_latest_modification_time(entry_path)
-        else:
-            sub_time = os.path.getmtime(entry_path)
+        if is_link(entry_path):
+            continue
+        try:
+            if os.path.isdir(entry_path):
+                sub_time = get_latest_modification_time(entry_path)
+            else:
+                sub_time = os.path.getmtime(entry_path)
+        except FileNotFoundError:
+            continue
         if sub_time is not None and (latest_time is None or sub_time > latest_time):
             latest_time = sub_time
 
     return latest_time
 
 
-def get_all_files(path, all_paths=None):
+def get_all_files(path, all_paths=None, exclude=None):
     """递归获取目录下所有文件的路径集合。
 
     Args:
         path: 要遍历的目录路径
         all_paths: 递归过程中累积结果的集合，外部调用时无需传入
+        exclude: 跳过的目录名集合
 
     Returns:
         set: 目录下所有文件的路径集合（不包含目录本身）
@@ -55,12 +90,16 @@ def get_all_files(path, all_paths=None):
     if all_paths is None:
         # 首次调用时初始化结果集合，避免可变默认参数被多次调用共享
         all_paths = set()
+    exclude = exclude or set()
     items = os.listdir(path)  # 获取当前目录下所有条目（文件和目录）的名称
     for item in items:
         item_path = os.path.join(path, item)  # 拼接为完整路径
+        if is_link(item_path):
+            continue
         if os.path.isdir(item_path):
             # 是目录则递归处理，结果累积到同一个集合中
-            get_all_files(item_path, all_paths)
+            if item not in exclude:
+                get_all_files(item_path, all_paths, exclude=exclude)
         else:
             # 是文件则直接加入结果集合
             all_paths.add(item_path)
@@ -76,11 +115,12 @@ def list_directory(path, exclude=None):
         raise FileNotFoundError(f"路径不存在: {path}")
 
     exclude = exclude or set()
-    entries = sorted(os.listdir(path), key=lambda e: (os.path.isfile(os.path.join(path, e)), e.lower()))
+    entries = sorted(
+        (entry for entry in os.listdir(path) if entry not in exclude and not is_link(os.path.join(path, entry))),
+        key=lambda entry: (os.path.isfile(os.path.join(path, entry)), entry.lower()),
+    )
     lines = []
     for index, entry in enumerate(entries):
-        if entry in exclude:
-            continue
         is_last = index == len(entries) - 1
         connector = '└── ' if is_last else '├── '
         lines.append(connector + entry)

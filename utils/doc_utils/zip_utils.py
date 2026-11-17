@@ -1,6 +1,8 @@
 import os
 import zipfile
 
+from utils.doc_utils.os_utils import is_link
+
 
 def zip_folder(
     folder_path: str,
@@ -42,13 +44,13 @@ def zip_folder(
     with zipfile.ZipFile(output_path, "w", compression) as zf:
         for root, dirs, files in os.walk(folder_path):
             # 原地过滤，让 os.walk 不再深入被忽略的目录
-            dirs[:] = [d for d in dirs if d not in ignore_set]
+            dirs[:] = [d for d in dirs if d not in ignore_set and not is_link(os.path.join(root, d))]
             for name in files:
                 if name in ignore_set:
                     continue
                 file_path = os.path.join(root, name)
                 # 跳过 zip 自身，避免输出文件在源文件夹内时被重复打包
-                if os.path.abspath(file_path) == output_path:
+                if os.path.abspath(file_path) == output_path or is_link(file_path):
                     continue
                 arcname = os.path.relpath(file_path, folder_path)
                 zf.write(file_path, arcname)

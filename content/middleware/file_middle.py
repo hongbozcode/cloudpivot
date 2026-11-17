@@ -1,115 +1,136 @@
 import asyncio
 import os
-from  langchain.agents.middleware  import  AgentMiddleware,AgentState
-from langchain_core.messages import ToolMessage
-from utils.general_utils.loggers import logger
+from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
-from utils.doc_utils import os_utils, base64_utils
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
+
 from core import config
-from os.path import normpath
+from utils.doc_utils import base64_utils, os_utils
 
 
 class FileState(AgentState):
-    before_paths:set
-    upload_files: list # 存储上传的文件
+    before_paths: set[str]
+    directory_context: str
+    upload_context: str | None
+    upload_files: list | None
 
 
 class FileMiddle(AgentMiddleware):
     state_schema = FileState
-
-    # 目录结构变化检测排除的目录：这些目录的内容在对话过程中会被中间件持续写入，
-    # 变化不代表用户工作文件有更新，若不排除会导致每轮都误注入目录结构
     EXCLUDED_DIRS = {'conversation_history'}
+    PATH_ARGUMENTS = {'reade_file_path', 'write_file_path', 'image_path', 'reference_image_path'}
+    LEGACY_CONTEXT_PREFIXES = ('当前目录结构:\n', '用户上传了文件, 路径如下: ')
 
-    def _get_work_files(self, path):
-        """获取目录下所有文件路径集合，排除 EXCLUDED_DIRS 中的目录。"""
-        all_paths = set()
-        if not os.path.exists(path):
-            return all_paths
-        items = os.listdir(path)
-        for item in items:
-            item_path = os.path.join(path, item)
-            if os.path.isdir(item_path):
-                if item in self.EXCLUDED_DIRS:
-                    continue  # 排除的目录直接跳过
-                all_paths.update(self._get_work_files(item_path, ))
-            else:
-                all_paths.add(item_path)
-        return all_paths
+    def _save_uploads(self, upload_files):
+        root = Path(config.ROOT_PATH_AGENT).resolve()
+        upload_dir = root / config.USER_UPLOAD_DIR
+        if os_utils.resolve_within(upload_dir, root) != upload_dir:
+            raise ValueError('上传目录必须使用工作目录下的常规目录。')
+        uploads = []
+        for file in upload_files:
+            filename = file.get('metadata', {}).get('filename')
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or filename.endswith(('.', ' '))
+                or any(char in filename for char in '/\\:<>"|?*\x00')
+                or PureWindowsPath(filename).is_reserved()
+            ):
+                raise ValueError('上传文件必须使用有效的文件名。')
+            os_utils.resolve_within(upload_dir / filename, upload_dir)
+            uploads.append((filename, file.get('data')))
+
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        saved = []
+        for filename, data in uploads:
+            path = upload_dir / filename
+            try:
+                base64_utils.base64_to_file(data, path)
+            except FileExistsError:
+                path = upload_dir / f'{uuid4().hex}{path.suffix}'
+                base64_utils.base64_to_file(data, path)
+            saved.append('/' + path.relative_to(root).as_posix())
+        return saved
 
     async def abefore_agent(self, state, runtime):
-        state_dict = {} # 初始化共享工作目录的文件状态
+        await asyncio.to_thread(Path(config.ROOT_PATH_AGENT).mkdir, parents=True, exist_ok=True)
+        updates = {'upload_context': None}
 
-        if os.path.exists(config.ROOT_PATH_AGENT):
-            state_dict['before_paths'] = self._get_work_files(config.ROOT_PATH_AGENT)
+        # Remove synthetic messages previously persisted by this middleware.
+        legacy_messages = [
+            RemoveMessage(id=message.id)
+            for message in state.get('messages', [])
+            if isinstance(message, ToolMessage)
+            and message.name is None
+            and message.id
+            and isinstance(message.content, str)
+            and message.content.startswith(self.LEGACY_CONTEXT_PREFIXES)
+        ]
+        if legacy_messages:
+            updates['messages'] = legacy_messages
 
-        # 接收上传文件
-        upload_files = state.get('upload_files')
-        if upload_files: # 如果有上传文件,则需下载，之后更新messages，与清空upload_files
-            upload_dir = os.path.join(config.ROOT_PATH_AGENT, config.USER_UPLOAD_DIR)  # 获取上传文件的目录路径
-            await asyncio.to_thread(os.makedirs,upload_dir, exist_ok=True) # 创建上传文件的目录
-
-            content = '用户上传了文件, 路径如下: '
-            for file in upload_files:
-                base64_str = file.get('data')
-                file_name = file.get('metadata').get('filename')
-                # 把Base64内容保存到共享工作目录下的user_upload目录
-                file_path = os.path.join(upload_dir, file_name)
-                relative_file_path = os.path.join(config.USER_UPLOAD_DIR,file_name)
-                content += f'\n{relative_file_path}'
-                base64_utils.base64_to_file(base64_str,file_path)
-            state_dict['messages'] = [ToolMessage(content=content,tool_call_id=uuid4().hex)]
-            state_dict['upload_files'] = None
-
-        return state_dict
+        if upload_files := state.get('upload_files'):
+            saved = await asyncio.to_thread(self._save_uploads, upload_files)
+            updates['upload_context'] = '用户上传的文件路径：\n' + '\n'.join(saved)
+            updates['upload_files'] = None
+        return updates
 
     def before_model(self, state, runtime):
-        # 把目录结构添加到上下文
-        #得到目录结构字符串
-        dir_str = os_utils.list_directory(path=config.ROOT_PATH_AGENT, exclude=self.EXCLUDED_DIRS)
-        current_paths = self._get_work_files(config.ROOT_PATH_AGENT)
-        logger.info(f"before_paths:{state.get('before_paths')}")
-        logger.info(f"current_paths:{current_paths}")
-        # 判断是否用添加到上下文
-        if not state.get("before_paths") or current_paths!=state["before_paths"]:
-            logger.info("添加目录结构到上下文")
-            #添加到上下文
-            return {'messages':[ToolMessage(content=f"当前目录结构:\n{dir_str}",tool_call_id=uuid4().hex)],"before_paths":current_paths}
+        root = config.ROOT_PATH_AGENT
+        current_paths = os_utils.get_all_files(root, exclude=self.EXCLUDED_DIRS)
+        if state.get('directory_context') is None or current_paths != state.get('before_paths'):
+            directory = os_utils.list_directory(root, exclude=self.EXCLUDED_DIRS)
+            return {'directory_context': '当前目录结构：\n' + (directory or '（空）'),
+                    'before_paths': current_paths}
         return None
 
-    def change_file_path(self,path):
-        """
-           转换文件路径为共享工作目录中的文件路径
-            # 例如：/user_upload/a.txt -> /agent_files/user_upload/a.txt
-           Args:
-               path: 原始文件路径
-           Returns:
-               str: 转换后的文件路径
-        """
-        root_dir = config.ROOT_PATH_AGENT
-        path = os.path.normpath(path)  # 规范化这个路径本身
-        if root_dir in path:  # 如果路径本身就包含了根目录，则直接返回
-            return path
-        if os.path.isabs(path):  # 判断路径是否是绝对路径
-            path = os.path.relpath(path, start='/')  # 获取相对路径
-        return os.path.normpath(os.path.join(root_dir, path))  # 与真正的工作目录路径拼接
+    async def awrap_model_call(self, request, handler):
+        context = '\n\n'.join(filter(None, (
+            request.state.get('directory_context'),
+            request.state.get('upload_context'),
+        )))
+        if context:
+            note = HumanMessage(content='下面是应用提供的工作区信息：\n' + context)
+            request = request.override(messages=[note, *request.messages])
+        return await handler(request)
 
+    def change_file_path(self, path):
+        configured_root = Path(config.ROOT_PATH_AGENT)
+        root = configured_root.resolve()
+        path = Path(path)
+        if path.is_relative_to(root) or path.is_relative_to(configured_root):
+            candidate = path
+        elif path.drive:
+            raise ValueError('文件路径必须位于工作目录内。')
+        else:
+            virtual_path = path.relative_to(path.anchor) if path.anchor else path
+            candidate = root / virtual_path
+        return str(os_utils.resolve_within(candidate, root))
 
-    #不允许展示根目录，进行透明化处理
-    async def awrap_tool_call(self,request,handler):
+    async def awrap_tool_call(self, request, handler):
+        call = request.tool_call
+        args = call['args']
+        try:
+            resolved_args = {
+                name: self.change_file_path(value) if name in self.PATH_ARGUMENTS else value
+                for name, value in args.items()
+            }
+        except (ValueError, OSError, RuntimeError):
+            return ToolMessage(
+                content='文件路径必须位于工作目录内，并且使用有效名称。',
+                name=call['name'],
+                tool_call_id=call['id'],
+                status='error',
+            )
 
-        for  arg_key  in  request.tool_call['args']:
-            # 将不在文件管理后端的工具中，加上根目录前缀
-            if arg_key in ['reade_file_path', 'write_file_path','image_path', 'reference_image_path']:
-                request.tool_call['args'][arg_key] = self.change_file_path(request.tool_call['args'][arg_key])
-
-
-        response =  await handler(request)
-        #  替换路径，保证透明化
-        content = response.content
-        if content and type(content) is str:
-            # 统一路径格式
-            content = normpath(content)
-            response.content=content.replace(config.ROOT_PATH_AGENT,'')
+        if resolved_args != args:
+            request = request.override(tool_call={**call, 'args': resolved_args})
+        response = await handler(request)
+        if isinstance(response, ToolMessage) and isinstance(response.content, str) and response.content:
+            # Keep the paths shown to the model relative to the virtual workspace.
+            content = os.path.normpath(response.content)
+            root = str(Path(config.ROOT_PATH_AGENT).resolve())
+            response.content = content.replace(root, '').replace(config.ROOT_PATH_AGENT, '')
         return response

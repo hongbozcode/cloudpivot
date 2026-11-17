@@ -1,6 +1,7 @@
 from langchain_core.tools import tool
 
-from utils.doc_utils import markitdown_utils
+from core import config
+from utils.doc_utils import markitdown_utils, os_utils
 
 
 @tool
@@ -19,6 +20,7 @@ def get_file_content(reade_file_path):
     :return: 转换后的文本内容（str）；文件无文本内容时返回空字符串
     """
     try:
-        return markitdown_utils.get_file_content(reade_file_path)
+        path = os_utils.resolve_within(reade_file_path, config.ROOT_PATH_AGENT)
+        return markitdown_utils.get_file_content(str(path))
     except Exception as e:
         return f"文件读取失败: {e}。文件可能不存在、为空或格式损坏,请勿重复尝试。"

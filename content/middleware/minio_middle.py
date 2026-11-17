@@ -1,22 +1,19 @@
+import asyncio
 import time
-from typing import Any
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from uuid import uuid4
 
-from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import StateT
+from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import AIMessage
-from langgraph.runtime import Runtime
-from langgraph.typing import ContextT
 
 from connection import minio_client
 from core import config
-from study.codes.langgraph.复现agent import AgentState
-from utils.doc_utils import zip_utils, os_utils
-import  asyncio
-import os
+from utils.doc_utils import os_utils, zip_utils
+
 
 class TimeState(AgentState):
-    start_time:float
-
+    start_time: float
 
 
 class MinioMiddle(AgentMiddleware):
@@ -26,18 +23,24 @@ class MinioMiddle(AgentMiddleware):
         minio_client.create_bucket(config.MINIO_BUCKET_NAME)
 
     def before_agent(self, state, runtime):
-        # 返回更新
         return {'start_time': time.time()}
 
-    async def aafter_agent(self, state, runtime) :
-        if os_utils.get_latest_modification_time(config.ROOT_PATH_AGENT) > state['start_time']:
+    def _publish_archive(self, start_time):
+        root = config.ROOT_PATH_AGENT
+        if not Path(root).is_dir():
+            return None
+        latest_time = os_utils.get_latest_modification_time(root)
+        if latest_time is None or latest_time <= start_time:
+            return None
 
-            # 压缩成zip
-            zip_path = await  asyncio.to_thread(zip_utils.zip_folder, config.ROOT_PATH_AGENT)
-            # 上传minio并得到下载链接
-            download_url=await asyncio.to_thread(minio_client.upload_file_and_download_url,config.MINIO_BUCKET_NAME, os.path.basename(zip_path), zip_path)
-            # 把下载链接添加进AImessage
-            # 超链接形式
-            download_url=f"[点击下载](<{download_url}>)"
-            return {'messages':[AIMessage(content=download_url)]}
+        object_name = f'agent-files-{uuid4().hex}.zip'
+        with TemporaryDirectory(prefix='cloudpivot-export-') as temp_dir:
+            archive = Path(temp_dir) / object_name
+            zip_path = zip_utils.zip_folder(root, output_path=str(archive))
+            return minio_client.upload_file_and_download_url(config.MINIO_BUCKET_NAME, object_name, zip_path)
+
+    async def aafter_agent(self, state, runtime):
+        download_url = await asyncio.to_thread(self._publish_archive, state['start_time'])
+        if download_url:
+            return {'messages': [AIMessage(content=f'[点击下载](<{download_url}>)')]}
         return None

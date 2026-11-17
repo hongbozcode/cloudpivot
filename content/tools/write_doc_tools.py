@@ -6,6 +6,7 @@ import pypandoc
 import os
 
 from core import config
+from utils.doc_utils import os_utils
 # 从content.utils导入runtime_util模块，并重命名为rt
 
 # 从utils.general_utils.globle_util导入get_platform函数
@@ -25,18 +26,21 @@ def convert_file(write_file_path, output_format):
     :return 输出文件路径,失败时返回错误说明
     """
 
-    # 规范化路径,防止模型传入带引号/多余空格/正斜杠混杂的路径
-    write_file_path = os.path.normpath(str(write_file_path))
+    if not isinstance(output_format, str) or not output_format.isascii() or not output_format.isalnum():
+        return '目标格式必须使用格式名，例如 docx、pdf 或 html。'
+
+    try:
+        write_file_path = str(os_utils.resolve_within(write_file_path, config.ROOT_PATH_AGENT))
+        output_file = os.path.splitext(write_file_path)[0] + '.' + output_format
+        os_utils.resolve_within(output_file, config.ROOT_PATH_AGENT)
+    except (TypeError, ValueError, OSError, RuntimeError):
+        return '输入路径和转换结果必须位于工作目录内，并且使用有效的文件名。'
 
     # 输入文件必须存在,提前校验避免 pypandoc 抛异常导致整个 run 失败
     if not os.path.isfile(write_file_path):
         return (f"输入文件不存在: {write_file_path}。"
                 "请先确认文件已创建(可用 ls 工具查看目录结构),"
                 "新文件请先用 write_file 写入后再转换,请勿用不存在的路径重复调用本工具。")
-
-    # 生成输出文件路径：用splitext只替换扩展名，避免路径中同名子串被误替换
-    base, _ = os.path.splitext(write_file_path)
-    output_file = base + '.' + output_format
 
     # 获取输入文件的格式（扩展名）
     input_format = write_file_path.split('.')[-1]

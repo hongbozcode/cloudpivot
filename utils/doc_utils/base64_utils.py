@@ -15,8 +15,8 @@ def file_to_data_uri(file_path):
     return f"data:{mime_type};base64,{base64_str}"
 
 def base64_to_file(base64_str, output_path):
-    """将Base64字符串转换回文件"""
+    """将 Base64 字符串写入新文件。"""
     binary_data = base64.b64decode(base64_str)
 
-    with open(output_path, 'wb') as file:
+    with open(output_path, 'xb') as file:
         file.write(binary_data)

@@ -1,6 +1,6 @@
 from connection import gen_img
 from core import config as cfg
-from utils.doc_utils import base64_utils
+from utils.doc_utils import base64_utils, os_utils
 import os
 import uuid
 from utils.doc_utils import download_utils
@@ -24,6 +24,10 @@ def generate_image(prompt,image_size,reference_image_path=None):
     # 根据是否存在reference_image来判断调用生图模型还是修图模型
     if reference_image_path:
         model = cfg.EDIT_IMAGE_MODEL
+        try:
+            reference_image_path = os_utils.resolve_within(reference_image_path, cfg.ROOT_PATH_AGENT)
+        except (TypeError, ValueError, OSError, RuntimeError):
+            return '参考图路径必须位于工作目录内。'
         # 把参考图变成base64 uri
         reference_image = base64_utils.file_to_data_uri(reference_image_path)
     else:
@@ -36,6 +40,10 @@ def generate_image(prompt,image_size,reference_image_path=None):
     # 1. 图片的路径的问题
     # 1.1 拼接保存图片文件夹的路径
     image_dir_path = os.path.join(cfg.ROOT_PATH_AGENT,cfg.GENERATE_IMAGE_PATH)
+    try:
+        image_dir_path = os_utils.resolve_within(image_dir_path, cfg.ROOT_PATH_AGENT)
+    except (ValueError, OSError, RuntimeError):
+        return '生图输出路径必须位于工作目录内。'
     # 创建文件夹
     os.makedirs(image_dir_path, exist_ok=True)
     # 1.2 拼接图片路径
