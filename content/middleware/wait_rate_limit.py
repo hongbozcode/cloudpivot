@@ -6,13 +6,12 @@ from utils.general_utils.loggers import logger
 
 @wrap_model_call
 async def wait_rate_limit(request,handler):
-    for i in range(config.WAIT_RATE_LIMIT_RETRY):
+    attempts = max(1, config.WAIT_RATE_LIMIT_RETRY)
+    for attempt in range(1, attempts + 1):
         try:
-            result = await handler(request)
-            return result # 仅需成功就立即返回
+            return await handler(request)
         except RateLimitError:
-            logger.info(f'触发了速率限制,正在重试 {i+1}/{config.WAIT_RATE_LIMIT_RETRY}')
-            # 如果触发速率限制则停顿90秒，再继续循环
+            if attempt == attempts:
+                raise
+            logger.info('触发速率限制，等待重试 %s/%s', attempt, attempts - 1)
             await asyncio.sleep(config.WAIT_RATE_LIMIT_SEC)
-    else:
-        raise RateLimitError

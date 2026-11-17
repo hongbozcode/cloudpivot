@@ -21,6 +21,27 @@ def resolve_within(path, root) -> Path:
     return resolved
 
 
+def resolve_workspace_path(path, root) -> Path:
+    """将虚拟路径或工作区内的物理路径解析为受约束的物理路径。"""
+    configured_root = Path(root)
+    root = configured_root.resolve()
+    path = Path(path)
+    if path.is_relative_to(root) or path.is_relative_to(configured_root):
+        candidate = path
+    elif path.drive:
+        raise ValueError('文件路径必须位于工作目录内。')
+    else:
+        relative = path.relative_to(path.anchor) if path.anchor else path
+        candidate = root / relative
+    return resolve_within(candidate, root)
+
+
+def workspace_path(path, root) -> str:
+    """将物理路径转为供智能体使用的 POSIX 虚拟路径。"""
+    root = Path(root).resolve()
+    return '/' + resolve_within(path, root).relative_to(root).as_posix()
+
+
 def is_link(path):
     """识别符号链接和 Windows 重解析点，避免递归进入其目标。"""
     try:

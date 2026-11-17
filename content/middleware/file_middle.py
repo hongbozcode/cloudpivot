@@ -1,5 +1,4 @@
 import asyncio
-import os
 from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
@@ -20,7 +19,6 @@ class FileState(AgentState):
 class FileMiddle(AgentMiddleware):
     state_schema = FileState
     EXCLUDED_DIRS = {'conversation_history'}
-    PATH_ARGUMENTS = {'reade_file_path', 'write_file_path', 'image_path', 'reference_image_path'}
     LEGACY_CONTEXT_PREFIXES = ('当前目录结构:\n', '用户上传了文件, 路径如下: ')
 
     def _save_uploads(self, upload_files):
@@ -95,42 +93,3 @@ class FileMiddle(AgentMiddleware):
             note = HumanMessage(content='下面是应用提供的工作区信息：\n' + context)
             request = request.override(messages=[note, *request.messages])
         return await handler(request)
-
-    def change_file_path(self, path):
-        configured_root = Path(config.ROOT_PATH_AGENT)
-        root = configured_root.resolve()
-        path = Path(path)
-        if path.is_relative_to(root) or path.is_relative_to(configured_root):
-            candidate = path
-        elif path.drive:
-            raise ValueError('文件路径必须位于工作目录内。')
-        else:
-            virtual_path = path.relative_to(path.anchor) if path.anchor else path
-            candidate = root / virtual_path
-        return str(os_utils.resolve_within(candidate, root))
-
-    async def awrap_tool_call(self, request, handler):
-        call = request.tool_call
-        args = call['args']
-        try:
-            resolved_args = {
-                name: self.change_file_path(value) if name in self.PATH_ARGUMENTS else value
-                for name, value in args.items()
-            }
-        except (ValueError, OSError, RuntimeError):
-            return ToolMessage(
-                content='文件路径必须位于工作目录内，并且使用有效名称。',
-                name=call['name'],
-                tool_call_id=call['id'],
-                status='error',
-            )
-
-        if resolved_args != args:
-            request = request.override(tool_call={**call, 'args': resolved_args})
-        response = await handler(request)
-        if isinstance(response, ToolMessage) and isinstance(response.content, str) and response.content:
-            # Keep the paths shown to the model relative to the virtual workspace.
-            content = os.path.normpath(response.content)
-            root = str(Path(config.ROOT_PATH_AGENT).resolve())
-            response.content = content.replace(root, '').replace(config.ROOT_PATH_AGENT, '')
-        return response
