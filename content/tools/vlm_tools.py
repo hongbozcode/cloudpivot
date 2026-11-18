@@ -1,7 +1,7 @@
 from functools import lru_cache
 
 from connection.llm import get_vlm
-from core import config
+from content.workspace import get_workspace_root
 from utils.doc_utils import base64_utils, os_utils
 from langchain.messages import HumanMessage
 from openai import OpenAIError
@@ -16,7 +16,7 @@ def read_image(image_path):
     :return:
     """
     try:
-        image_path = os_utils.resolve_workspace_path(image_path, config.ROOT_PATH_AGENT)
+        image_path = os_utils.resolve_workspace_path(image_path, get_workspace_root())
         base64_url = base64_utils.file_to_data_uri(image_path)
     except (TypeError, ValueError, OSError, RuntimeError) as exc:
         return f'图片读取失败：{exc}'

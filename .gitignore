@@ -222,3 +222,4 @@ __marimo__/
 .idea/
 study/
 .langgraph_api
+test*.py

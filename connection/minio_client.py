@@ -1,4 +1,5 @@
 from minio import Minio
+from minio.error import S3Error
 from core import config
 
 client = Minio(
@@ -11,10 +12,11 @@ client = Minio(
 # 创建bucket
 def create_bucket(bucket_name):
     if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
-        print(f"Bucket '{bucket_name}' 成功创建")
-    else:
-        print(f"Bucket '{bucket_name}' 已经存在")
+        try:
+            client.make_bucket(bucket_name)
+        except S3Error as exc:
+            if exc.code != 'BucketAlreadyOwnedByYou':
+                raise
 
 # 展示bucket
 def list_buckets():

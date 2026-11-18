@@ -1,9 +1,9 @@
-from pathlib import Path
 from uuid import uuid4
 
 import requests
 
 from connection import gen_img
+from content.workspace import get_workspace_root
 from core import config
 from utils.doc_utils import base64_utils, download_utils, os_utils
 
@@ -18,13 +18,13 @@ def generate_image(prompt: str, image_size: str, reference_image_path: str | Non
         model, _ = config.require_env(
             'EDIT_IMAGE_MODEL' if reference_image_path else 'IMAGE_MODEL', 'OPENAI_API_KEY'
         )
-        root = config.ROOT_PATH_AGENT
+        root = get_workspace_root()
         reference_image = None
         if reference_image_path:
             reference = os_utils.resolve_workspace_path(reference_image_path, root)
             reference_image = base64_utils.file_to_data_uri(reference)
 
-        output_dir = os_utils.resolve_within(Path(root) / config.GENERATE_IMAGE_PATH, root)
+        output_dir = os_utils.resolve_within(root / config.GENERATE_IMAGE_PATH, root)
         image_url = gen_img.gen_img(model, prompt, image_size, reference_image=reference_image)
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / f'{uuid4().hex}.png'

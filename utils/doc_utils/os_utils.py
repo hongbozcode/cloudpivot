@@ -42,19 +42,40 @@ def workspace_path(path, root) -> str:
     return '/' + resolve_within(path, root).relative_to(root).as_posix()
 
 
-def is_link(path):
+def is_link(path, *, missing=True):
     """识别符号链接和 Windows 重解析点，避免递归进入其目标。"""
     try:
         info = os.lstat(path)
     except FileNotFoundError:
         # A file can disappear between enumeration and inspection.
-        return True
+        return missing
     return stat.S_ISLNK(info.st_mode) or (
         os.name == 'nt' and bool(info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
     )
 
-# 递归获取每个文件的修改时间,取最晚的时间返回
-def get_latest_modification_time(path):
+def iter_files(root, *, ignore=(), exclude=()):
+    """遍历常规文件。ignore 匹配名称，exclude 匹配相对于根目录的路径。"""
+    root = Path(root)
+    ignored_names = set(ignore)
+    excluded_paths = {Path(path) for path in exclude}
+
+    def included(path):
+        return (
+            path.name not in ignored_names
+            and path.relative_to(root) not in excluded_paths
+            and not is_link(path)
+        )
+
+    for directory, dirs, files in os.walk(root):
+        directory = Path(directory)
+        dirs[:] = [name for name in dirs if included(directory / name)]
+        for name in files:
+            path = directory / name
+            if included(path):
+                yield path
+
+
+def get_latest_modification_time(path, *, exclude=()):
     """递归获取目录下所有文件的最新修改时间。
 
     目录本身不参与比较，只比较其包含的文件；空目录会忽略。
@@ -62,6 +83,7 @@ def get_latest_modification_time(path):
     Args:
         path: 目录或文件路径。是目录时递归取其中所有文件的最晚 mtime，
             是文件时直接返回该文件的 mtime。
+        exclude: 跳过的文件或目录，按相对于 path 的路径匹配。
 
     Returns:
         float: 最晚的修改时间戳（epoch 秒）。目录下没有任何文件时返回 None。
@@ -77,19 +99,13 @@ def get_latest_modification_time(path):
     if os.path.isfile(path):
         return os.path.getmtime(path)
 
-    for entry in os.listdir(path):
-        entry_path = os.path.join(path, entry)
-        if is_link(entry_path):
-            continue
+    for file in iter_files(path, exclude=exclude):
         try:
-            if os.path.isdir(entry_path):
-                sub_time = get_latest_modification_time(entry_path)
-            else:
-                sub_time = os.path.getmtime(entry_path)
+            modified_at = file.stat().st_mtime
         except FileNotFoundError:
             continue
-        if sub_time is not None and (latest_time is None or sub_time > latest_time):
-            latest_time = sub_time
+        if latest_time is None or modified_at > latest_time:
+            latest_time = modified_at
 
     return latest_time
 

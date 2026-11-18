@@ -1,7 +1,8 @@
 import os
 import zipfile
+from pathlib import Path
 
-from utils.doc_utils.os_utils import is_link
+from utils.doc_utils.os_utils import iter_files
 
 
 def zip_folder(
@@ -9,6 +10,8 @@ def zip_folder(
     output_path: str | None = None,
     ignore: list[str] | None = None,
     compression: int = zipfile.ZIP_DEFLATED,
+    *,
+    exclude=(),
 ) -> str:
     """将文件夹压缩成 zip。
 
@@ -19,6 +22,7 @@ def zip_folder(
         ignore: 需要跳过的文件/目录名列表（只按名字匹配，不按路径），
             例如 [".git", "__pycache__"]。
         compression: 压缩方式，默认 ZIP_DEFLATED。
+        exclude: 需要跳过的文件或目录，按相对于 folder_path 的路径匹配。
 
     Returns:
         生成的 zip 文件路径。
@@ -39,20 +43,16 @@ def zip_folder(
     output_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    ignore_set = set(ignore or [])
+    folder = Path(folder_path)
+    archive = Path(output_path)
 
     with zipfile.ZipFile(output_path, "w", compression) as zf:
-        for root, dirs, files in os.walk(folder_path):
-            # 原地过滤，让 os.walk 不再深入被忽略的目录
-            dirs[:] = [d for d in dirs if d not in ignore_set and not is_link(os.path.join(root, d))]
-            for name in files:
-                if name in ignore_set:
-                    continue
-                file_path = os.path.join(root, name)
-                # 跳过 zip 自身，避免输出文件在源文件夹内时被重复打包
-                if os.path.abspath(file_path) == output_path or is_link(file_path):
-                    continue
-                arcname = os.path.relpath(file_path, folder_path)
-                zf.write(file_path, arcname)
+        for file in iter_files(folder, ignore=ignore or (), exclude=exclude):
+            if file == archive:
+                continue
+            try:
+                zf.write(file, file.relative_to(folder))
+            except FileNotFoundError:
+                continue
 
     return output_path

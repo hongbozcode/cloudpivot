@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv # 导入load_dotnev(可有可无)
 load_dotenv()  # 默认加载启动时当前目录下的 .env 文件 (可有可无)
@@ -15,7 +16,7 @@ def require_env(*names: str) -> tuple[str, ...]:
 LOG_DIR = os.path.dirname(__file__) # 当前脚本所在目录
 NEED_CONSOLE_LOG = True # 日志是否打印到控制台
 
-ROOT_PATH_AGENT = os.path .normpath('/agent_files')
+ROOT_PATH_AGENT = Path(os.getenv('AGENT_WORKSPACE_ROOT') or '/agent_files')
 
 BASE_LLM = os.getenv("BASE_LLM") # 从环境变量中获取模型
 SMALL_LLM = os.getenv("SMALL_LLM") # 从环境变量中获取模型
@@ -29,6 +30,8 @@ MINIO_ENDPOINT = f'{_minio_host}:{_minio_port}'
 MINIO_CONSOLE_PORT = os.getenv("MINIO_CONSOLE_PORT")
 
 USER_UPLOAD_DIR ='user_upload'
+CONVERSATION_HISTORY_PATH = 'conversation_history'
+SKILL_DIR_PATH = 'skills'
 
 WAIT_RATE_LIMIT_SEC = 90 # 等待wait_rate_limit的间隔
 WAIT_RATE_LIMIT_RETRY = 3 # 重试次数

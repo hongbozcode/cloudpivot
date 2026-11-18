@@ -1,16 +1,16 @@
 import asyncio
-from pathlib import Path, PureWindowsPath
+from pathlib import PureWindowsPath
 from uuid import uuid4
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
 
+from content.workspace import get_workspace_root
 from core import config
 from utils.doc_utils import base64_utils, os_utils
 
 
 class FileState(AgentState):
-    before_paths: set[str]
     directory_context: str
     upload_context: str | None
     upload_files: list | None
@@ -18,11 +18,11 @@ class FileState(AgentState):
 
 class FileMiddle(AgentMiddleware):
     state_schema = FileState
-    EXCLUDED_DIRS = {'conversation_history'}
+    EXCLUDED_DIRS = {config.CONVERSATION_HISTORY_PATH}
     LEGACY_CONTEXT_PREFIXES = ('当前目录结构:\n', '用户上传了文件, 路径如下: ')
 
     def _save_uploads(self, upload_files):
-        root = Path(config.ROOT_PATH_AGENT).resolve()
+        root = get_workspace_root()
         upload_dir = root / config.USER_UPLOAD_DIR
         if os_utils.resolve_within(upload_dir, root) != upload_dir:
             raise ValueError('上传目录必须使用工作目录下的常规目录。')
@@ -53,7 +53,6 @@ class FileMiddle(AgentMiddleware):
         return saved
 
     async def abefore_agent(self, state, runtime):
-        await asyncio.to_thread(Path(config.ROOT_PATH_AGENT).mkdir, parents=True, exist_ok=True)
         updates = {'upload_context': None}
 
         # Remove synthetic messages previously persisted by this middleware.
@@ -76,13 +75,15 @@ class FileMiddle(AgentMiddleware):
         return updates
 
     def before_model(self, state, runtime):
-        root = config.ROOT_PATH_AGENT
-        current_paths = os_utils.get_all_files(root, exclude=self.EXCLUDED_DIRS)
-        if state.get('directory_context') is None or current_paths != state.get('before_paths'):
-            directory = os_utils.list_directory(root, exclude=self.EXCLUDED_DIRS)
-            return {'directory_context': '当前目录结构：\n' + (directory or '（空）'),
-                    'before_paths': current_paths}
+        root = get_workspace_root()
+        directory = os_utils.list_directory(root, exclude=self.EXCLUDED_DIRS) if root.is_dir() else ''
+        directory_context = '当前目录结构：\n' + (directory or '（空）')
+        if state.get('directory_context') != directory_context:
+            return {'directory_context': directory_context}
         return None
+
+    async def abefore_model(self, state, runtime):
+        return await asyncio.to_thread(self.before_model, state, runtime)
 
     async def awrap_model_call(self, request, handler):
         context = '\n\n'.join(filter(None, (
