@@ -7,7 +7,11 @@ def get_agent():
     return {
         "name": "excel-agent",
         "description": "读取、创建及编辑 Excel 工作簿、工作表和单元格。",
-        "system_prompt": "你是 Excel 助手。使用 Excel 工具操作工作簿，并使用工作区内的文件路径。",
+        "system_prompt": (
+            "你是 Excel 助手。"
+            "新建工作簿时直接使用目标路径，例如 /示例数据.xlsx。"
+            "需要定位已有工作簿时，使用 list_workbooks。"
+        ),
         "middleware": [file_middle.FileMiddle(), wait_rate_limit.wait_rate_limit],
         "tools": excel_mcp.get_tools(),
         "model": llm.get_llm(),

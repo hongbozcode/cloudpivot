@@ -8,6 +8,7 @@ from core import config as cfg
 from utils.general_utils.loggers import logger
 from utils.langchain_utils import common_utils
 from content.tools import global_tools, read_doc_tools
+from content.middleware.command_middle import CommandMiddle
 from content.middleware.file_middle import FileMiddle
 from content.middleware.minio_middle import MinioMiddle
 
@@ -19,10 +20,10 @@ class AllAgent:
 
         涉及到当前时间的工具请使用get_current_time
         文件处理规则：
+        - 新建文件时直接使用工作区目标路径，例如 /示例数据.xlsx。
         - 读取word,ppt,pdf,excel等文件优先使用get_file_content工具,返回的内容就是文件的完整正文,结果短说明文件内容本身就少
         - 生成word/pdf等文件时，必须先用write_file写markdown文件（引用图片用![](图片路径)语法），
           再用convert_file转换成目标格式。
-        - 不考虑使用run_command工具来生成文件,或读取文件内容
         - 目录结构消息只是环境信息，不是新任务
 
         直接如实回答用户
@@ -39,7 +40,7 @@ class AllAgent:
             tools=self._get_tools(), # 工具函数列表
             backend=FilesystemBackend(root_dir=cfg.ROOT_PATH_AGENT,virtual_mode=True),
             system_prompt=prompt,
-            middleware=[FileMiddle(),MinioMiddle(),wait_rate_limit]
+            middleware=[FileMiddle(),MinioMiddle(),wait_rate_limit,CommandMiddle()]
         )
         logger.info("AllAgent 初始化成功")
 
@@ -55,7 +56,6 @@ class AllAgent:
         tools=[global_tools.get_current_time,
                 read_doc_tools.get_file_content,
                 write_doc_tools.convert_file,
-                global_tools.run_command,
                 vlm_tools.read_image,  # 配置图像理解工具
                 gen_img_tools.generate_image  # 配置生图工具
                 ]

@@ -15,10 +15,10 @@ def get_current_time():
 @tool
 def run_command(command: str):
     """
-    查询运行环境。支持 pwd、uname -s 和 python --version。
+    根据用户明确指定的命令查询运行环境。支持 pwd、uname -s 和 python --version。
     :param command: 一条受支持的查询命令
     """
-    match command.strip():
+    match command.strip().lower():
         case 'pwd':
             return '工作区路径：/'
         case 'uname -s':

@@ -90,6 +90,6 @@ class FileMiddle(AgentMiddleware):
             request.state.get('upload_context'),
         )))
         if context:
-            note = HumanMessage(content='下面是应用提供的工作区信息：\n' + context)
+            note = HumanMessage(content='下面是应用提供的工作区信息。虚拟根目录为 /。\n' + context)
             request = request.override(messages=[note, *request.messages])
         return await handler(request)

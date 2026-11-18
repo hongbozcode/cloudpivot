@@ -12,13 +12,16 @@ def get_tools():
     root = Path(config.ROOT_PATH_AGENT).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
+    def resolve_path_arguments(arguments):
+        return {
+            name: str(resolve_workspace_path(value, root))
+            if value is not None and name.endswith('path') else value
+            for name, value in arguments.items()
+        }
+
     async def resolve_paths(request, handler):
         try:
-            args = {
-                name: str(resolve_workspace_path(value, root))
-                if value is not None and name.endswith('path') else value
-                for name, value in request.args.items()
-            }
+            args = await asyncio.to_thread(resolve_path_arguments, request.args)
         except (TypeError, ValueError, OSError, RuntimeError):
             return CallToolResult(
                 isError=True,
