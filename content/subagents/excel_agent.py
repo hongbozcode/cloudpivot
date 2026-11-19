@@ -1,10 +1,10 @@
-from connection import llm
+from langchain_core.language_models import BaseChatModel
 from content.mcps import excel_mcp
 from content.middleware import file_middle, wait_rate_limit
 from content.middleware.run_actions import RunActionsMiddleware
 
 
-def get_agent():
+def get_agent(model: BaseChatModel):
     return {
         "name": "excel-agent",
         "description": "读取、创建及编辑 Excel 工作簿、工作表和单元格。",
@@ -15,5 +15,5 @@ def get_agent():
         ),
         "middleware": [file_middle.FileMiddle(), wait_rate_limit.wait_rate_limit, RunActionsMiddleware()],
         "tools": excel_mcp.get_tools(),
-        "model": llm.get_llm(),
+        "model": model,
     }

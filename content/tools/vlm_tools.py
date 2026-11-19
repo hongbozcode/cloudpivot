@@ -4,17 +4,23 @@ from connection.llm import get_vlm
 from content.workspace import get_workspace_root
 from utils.doc_utils import base64_utils, os_utils
 from langchain.messages import HumanMessage
+from langchain_core.tools import tool
 from openai import OpenAIError
 
-vision_model = lru_cache(maxsize=1)(get_vlm)
+def read_image_tool(model_name: str | None):
+    @lru_cache(maxsize=1)
+    def vision_model():
+        return get_vlm(model_name)
+
+    @tool
+    def read_image(image_path: str):
+        """理解工作区图片。image_path 是图片的工作区路径。"""
+        return _read_image(image_path, vision_model)
+
+    return read_image
 
 
-def read_image(image_path):
-    """
-    理解图片的工具
-    :param image_path: 图片的路径
-    :return:
-    """
+def _read_image(image_path, vision_model):
     try:
         image_path = os_utils.resolve_workspace_path(image_path, get_workspace_root())
         base64_url = base64_utils.file_to_data_uri(image_path)

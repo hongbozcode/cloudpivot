@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field, StringConstraints, computed_field
 
 from api.accounts import CurrentAccount
 from api.dependencies import Runtime, require_write_origin
-from connection.chat import RUN_ERRORS, RunNotRetryable, SessionArchived, SessionRunning
+from connection.chat import RUN_ERRORS, InvalidAttachments, RunNotRetryable, SessionArchived, SessionRunning
+from connection.platform import DailyLimitReached
 from connection.run_cache import PAGE_SIZE
 from content.run_artifacts import artifact_path
 
@@ -61,6 +62,7 @@ class Message(BaseModel):
     role: Literal['user', 'assistant']
     text: str
     created_at: datetime
+    attachment_ids: list[UUID] = Field(default_factory=list)
 
 
 class RenameSession(BaseModel):
@@ -73,6 +75,7 @@ class StartRun(BaseModel):
     text: Annotated[str, StringConstraints(
         strip_whitespace=True, min_length=1, max_length=20_000, pattern=r'^[^\x00]+$',
     )]
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=10)
 
 
 @router.get('/sessions', response_model=list[Session])
@@ -121,7 +124,7 @@ async def get_messages(session_id: UUID, account: CurrentAccount, app: Runtime) 
 
 @router.post('/sessions/{session_id}/runs', status_code=202, response_model=StartedRun)
 async def start_run(session_id: UUID, body: StartRun, account: CurrentAccount, app: Runtime) -> dict:
-    return await _start_run(session_id, account, app, body.text)
+    return await _start_run(session_id, account, app, body.text, attachment_ids=list(dict.fromkeys(body.attachment_ids)))
 
 
 @router.get('/sessions/{session_id}/runs', response_model=list[Run])
@@ -132,20 +135,25 @@ async def session_runs(session_id: UUID, account: CurrentAccount, app: Runtime) 
 
 
 async def _start_run(
-    session_id: UUID, account: CurrentAccount, app: Runtime, text: str, *, retry_of: UUID | None = None,
+    session_id: UUID, account: CurrentAccount, app: Runtime, text: str, *,
+    attachment_ids: list[UUID] | None = None, retry_of: UUID | None = None,
 ) -> dict:
     try:
-        result = await app.chat.begin(account.id, session_id, text, retry_of=retry_of)
+        result = await app.chat.begin(account.id, session_id, text, attachment_ids=attachment_ids or [], retry_of=retry_of)
     except SessionArchived as exc:
         raise HTTPException(409, '会话已归档。请新建会话后发送。') from exc
     except RunNotRetryable as exc:
         raise HTTPException(409, '当前运行不能重试。') from exc
+    except InvalidAttachments as exc:
+        raise HTTPException(422, '有附件不可用，请从当前会话重新添加。') from exc
+    except DailyLimitReached as exc:
+        raise HTTPException(429, f'今日已使用 {exc.used} 次平台模型运行，当前上限为 {exc.limit} 次。历史和文件仍可查看。') from exc
     if result is None:
         raise HTTPException(404, SESSION_MISSING)
-    run, created, prompt = result
-    if created:
-        app.runs.start(run['id'], session_id, prompt)
-    return {**run, 'created': created}
+    run, run_input = result
+    if run_input is not None:
+        app.runs.start(run['id'], session_id, run_input)
+    return {**run, 'created': run_input is not None}
 
 
 async def _owned_run(app: Runtime, account: CurrentAccount, run_id: UUID) -> dict:

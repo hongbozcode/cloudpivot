@@ -6,7 +6,10 @@ from sqlalchemy import func, insert, literal, select, update
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from connection.schema import chat_messages, chat_run_events, chat_runs, chat_sessions
+from connection.files import attachment_files
+from connection.platform import PlatformModels, PlatformStore
+from connection.schema import chat_messages, chat_run_events, chat_runs, chat_sessions, run_attachments
+from content.session_files import upload_key
 
 
 class SessionArchived(Exception):
@@ -18,6 +21,10 @@ class SessionRunning(Exception):
 
 
 class RunNotRetryable(Exception):
+    pass
+
+
+class InvalidAttachments(Exception):
     pass
 
 
@@ -35,13 +42,20 @@ class CompletedContext:
     messages: list[dict]
 
 
+@dataclass(frozen=True)
+class RunInput:
+    text: str
+    models: PlatformModels
+
+
 _session_columns = (chat_sessions.c.id, chat_sessions.c.title, chat_sessions.c.updated_at, chat_sessions.c.archived_at)
 _latest_run = select(chat_runs).order_by(chat_runs.c.started_at.desc(), chat_runs.c.id.desc()).limit(1)
 
 
 class ChatStore:
-    def __init__(self, database: AsyncEngine):
+    def __init__(self, database: AsyncEngine, platform: PlatformStore):
         self.database = database
+        self.platform = platform
 
     async def create_session(self, account_id: UUID) -> dict:
         async with self.database.begin() as conn:
@@ -99,10 +113,14 @@ class ChatStore:
 
     async def messages(self, session_id: UUID) -> list[dict]:
         async with self.database.connect() as conn:
+            attachments = select(func.array_agg(aggregate_order_by(run_attachments.c.file_id, run_attachments.c.position)))
+            attachments = attachments.where(run_attachments.c.run_id == chat_messages.c.run_id).scalar_subquery()
             result = await conn.execute(
-                select(chat_messages).where(chat_messages.c.session_id == session_id).order_by(chat_messages.c.id)
+                select(chat_messages, attachments.label('attachment_ids'))
+                .where(chat_messages.c.session_id == session_id).order_by(chat_messages.c.id)
             )
-            return [dict(row) for row in result.mappings()]
+            return [dict(row, attachment_ids=row['attachment_ids'] or [] if row['role'] == 'user' else [])
+                    for row in result.mappings()]
 
     async def latest_run(self, session_id: UUID) -> dict | None:
         async with self.database.connect() as conn:
@@ -157,8 +175,9 @@ class ChatStore:
             return dict(row) if row else None
 
     async def begin(
-        self, account_id: UUID, session_id: UUID, text: str, *, retry_of: UUID | None = None,
-    ) -> tuple[dict, bool, str] | None:
+        self, account_id: UUID, session_id: UUID, text: str, *,
+        attachment_ids: list[UUID], retry_of: UUID | None = None,
+    ) -> tuple[dict, RunInput | None] | None:
         async with self.database.begin() as conn:
             session = (await conn.execute(
                 select(chat_sessions.c.archived_at)
@@ -182,16 +201,36 @@ class ChatStore:
                 if prompt is None:
                     raise RunNotRetryable
                 text = prompt
+                attachment_ids = list((await conn.execute(select(run_attachments.c.file_id).where(
+                    run_attachments.c.run_id == retry_of,
+                ).order_by(run_attachments.c.position))).scalars())
             active = (await conn.execute(
                 select(chat_runs).where(chat_runs.c.session_id == session_id, chat_runs.c.status == 'running')
             )).mappings().one_or_none()
             if active:
-                return dict(active), False, text
+                return dict(active), None
+            files = await attachment_files(conn, session_id, attachment_ids)
+            try:
+                unavailable = any(not file.workspace_path(session_id).is_file() for file in files)
+            except (ValueError, OSError) as exc:
+                raise InvalidAttachments from exc
+            if len(files) != len(attachment_ids) or unavailable:
+                raise InvalidAttachments
+            models, started_at = await self.platform.admit_run(conn, account_id)
             run_id = uuid4()
-            inserted = await conn.execute(insert(chat_runs).values(id=run_id, session_id=session_id).returning(chat_runs))
+            inserted = await conn.execute(insert(chat_runs).values(
+                id=run_id, session_id=session_id, started_at=started_at,
+            ).returning(chat_runs))
             await conn.execute(insert(chat_messages).values(session_id=session_id, run_id=run_id, role='user', text=text))
+            if files:
+                await conn.execute(insert(run_attachments), [
+                    {'run_id': run_id, 'position': index, 'file_id': file.id} for index, file in enumerate(files)
+                ])
+                text += '\n\n本次附件（会话工作区路径）：\n' + '\n'.join(
+                    f'- {upload_key(file.id, file.name)}' for file in files
+                )
             await conn.execute(update(chat_sessions).where(chat_sessions.c.id == session_id).values(updated_at=func.now()))
-            return dict(inserted.mappings().one()), True, text
+            return dict(inserted.mappings().one()), RunInput(text, models)
 
     async def append_event(self, run_id: UUID, data: dict) -> None:
         async with self.database.begin() as conn:

@@ -1,6 +1,6 @@
 from sqlalchemy import (
     BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Identity, Index,
-    LargeBinary, MetaData, Table, Text, UniqueConstraint, Uuid, func, text,
+    Integer, LargeBinary, MetaData, Table, Text, UniqueConstraint, Uuid, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -29,6 +29,20 @@ account_sessions = Table(
     Column('token_digest', LargeBinary, primary_key=True),
     Column('account_id', Uuid, ForeignKey('accounts.id'), nullable=False),
     Column('expires_at', DateTime(timezone=True), nullable=False, index=True),
+)
+platform_settings = Table(
+    'platform_settings', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('llm', Text),
+    Column('vlm', Text),
+    Column('daily_limit', Integer),
+    CheckConstraint('id = 1 AND daily_limit >= 0', name='platform_settings_values'),
+)
+account_quotas = Table(
+    'account_quotas', metadata,
+    Column('account_id', Uuid, ForeignKey('accounts.id'), primary_key=True),
+    Column('daily_limit', Integer, nullable=False),
+    CheckConstraint('daily_limit >= 0', name='account_daily_limit'),
 )
 chat_sessions = Table(
     'chat_sessions', metadata,
@@ -64,6 +78,19 @@ chat_run_events = Table(
     Column('id', BigInteger, Identity(always=True), primary_key=True),
     Column('run_id', Uuid, ForeignKey('chat_runs.id'), nullable=False),
     Column('data', JSONB, nullable=False),
+)
+session_files = Table(
+    'session_files', metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('session_id', Uuid, ForeignKey('chat_sessions.id'), nullable=False, index=True),
+    Column('name', Text, nullable=False),
+    Column('created_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+run_attachments = Table(
+    'run_attachments', metadata,
+    Column('run_id', Uuid, ForeignKey('chat_runs.id'), primary_key=True),
+    Column('position', Integer, primary_key=True),
+    Column('file_id', Uuid, ForeignKey('session_files.id'), nullable=False),
 )
 
 Index(

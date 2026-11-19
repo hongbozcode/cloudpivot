@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from functools import partial
 from uuid import UUID
@@ -11,7 +11,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from connection.chat import ChatStore, CompletedContext, TerminalStatus
+from connection.chat import ChatStore, CompletedContext, RunInput, TerminalStatus
+from connection.platform import PlatformModels
 from content.middleware.run_actions import RunActions, current_actions
 from content.run_artifacts import RunArtifacts
 from content.run_progress import RunProgress
@@ -58,17 +59,19 @@ class DeepChatAgent:
 
 
 class ChatRuns:
-    def __init__(self, store: ChatStore, agent: DeepChatAgent, progress_model: BaseChatModel | None):
+    def __init__(
+        self, store: ChatStore,
+        select_agent: Callable[[PlatformModels], Awaitable[tuple[DeepChatAgent, BaseChatModel | None]]],
+    ):
         self.store = store
-        self.agent = agent
-        self.progress_model = progress_model
+        self.select_agent = select_agent
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
         self.stops: dict[UUID, asyncio.Task[None]] = {}
 
-    def start(self, run_id: UUID, session_id: UUID, text: str) -> None:
+    def start(self, run_id: UUID, session_id: UUID, run_input: RunInput) -> None:
         if run_id in self.stops:
             return
-        task = asyncio.create_task(self._run(run_id, session_id, text))
+        task = asyncio.create_task(self._run(run_id, session_id, run_input))
         self.tasks[run_id] = task
         task.add_done_callback(lambda _: self.tasks.pop(run_id, None))
 
@@ -96,7 +99,7 @@ class ChatRuns:
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.store.interrupt_pending()
 
-    async def _run(self, run_id: UUID, session_id: UUID, text: str) -> None:
+    async def _run(self, run_id: UUID, session_id: UUID, run_input: RunInput) -> None:
         status: TerminalStatus = 'completed'
         actions = RunActions()
         token = current_actions.set(actions)
@@ -106,13 +109,14 @@ class ChatRuns:
                 return
             publish = partial(self.store.append_event, run_id)
             async with asyncio.timeout(300):
+                agent, progress_model = await self.select_agent(run_input.models)
                 context = await self.store.completed_context(session_id)
                 capture = RunArtifacts(run_id, session_id, publish)
                 await capture.start()
                 artifacts = capture
-                actions.progress = RunProgress(self.progress_model, text, publish, artifacts.capture)
+                actions.progress = RunProgress(progress_model, run_input.text, publish, artifacts.capture)
                 has_answer = False
-                async with aclosing(self.agent.stream_answer(run_id, session_id, text, context)) as stream:
+                async with aclosing(agent.stream_answer(run_id, session_id, run_input.text, context)) as stream:
                     async for delta in stream:
                         await publish({'type': 'text_delta', 'text': delta})
                         has_answer |= bool(delta.strip())

@@ -8,6 +8,10 @@ PostgreSQL URL，也支持 `CLOUDPIVOT_DATABASE_URL=主机:端口` 与独立的
 FastAPI 启动时通过 SQLAlchemy 初始化业务表，通过 LangGraph PostgreSQL Saver 初始化检查点表。
 Redis 可选，可用 `主机:端口` 或 `redis://主机:端口/1`。缓存只使用 DB 1。
 
+运营页默认提供 `BASE_LLM` 和 `BASE_VLM`。如需切换模型，在 `CLOUDPIVOT_PLATFORM_LLMS` 和
+`CLOUDPIVOT_PLATFORM_VLMS` 中添加逗号分隔的模型 ID。模型共用已配置的 `MODEL_API_BASE_URL`
+和 `OPENAI_API_KEY`。保存后的选择从下一次运行生效。每日运行上限初始为 20 次，按北京时间重置。
+
 在后端目录安装依赖，然后交互式创建首个运营账号。登录后从工作台进入「用户邀请」生成邀请链接。
 
 ```powershell

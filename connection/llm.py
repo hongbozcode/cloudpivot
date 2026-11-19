@@ -1,10 +1,10 @@
 from langchain_openai import ChatOpenAI
 from core import config as cfg
 
-def get_llm():
-    cfg.require_env('OPENAI_API_KEY', 'BASE_LLM')
+def get_llm(model_name: str | None = None):
+    cfg.require_env('OPENAI_API_KEY')
     llm = ChatOpenAI(
-            model=cfg.BASE_LLM,
+            model=model_name or cfg.require_env('BASE_LLM')[0],
             base_url=cfg.MODEL_API_BASE_URL,
             temperature=0.1,
         )
@@ -18,10 +18,10 @@ def get_small_llm():
         )
     return llm
 
-def get_vlm():
-    cfg.require_env('OPENAI_API_KEY', 'BASE_VLM')
+def get_vlm(model_name: str | None = None):
+    cfg.require_env('OPENAI_API_KEY')
     vlm = ChatOpenAI(
-            model=cfg.BASE_VLM,
+            model=model_name or cfg.require_env('BASE_VLM')[0],
             base_url=cfg.MODEL_API_BASE_URL,
     )
     return vlm

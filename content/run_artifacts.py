@@ -27,7 +27,7 @@ def _workspace_files(root: Path) -> dict[Path, tuple[int, int, int]]:
     from core import config
 
     files = {}
-    for path in iter_files(root, exclude=(config.USER_UPLOAD_DIR, config.CONVERSATION_HISTORY_PATH, config.SKILL_DIR_PATH)):
+    for path in iter_files(root, exclude=(config.CONVERSATION_HISTORY_PATH, config.SKILL_DIR_PATH)):
         relative = path.relative_to(root)
         if any(part.startswith('.') for part in relative.parts):
             continue

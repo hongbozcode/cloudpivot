@@ -112,6 +112,229 @@ class AccountChatIntegrationTest(unittest.TestCase):
             'username': username, 'password': 'member-test-pass', 'token': token,
         })
 
+    def test_uploaded_csv_drives_a_run_and_the_same_artifact_can_be_previewed_and_downloaded(self):
+        self.login('operator', 'operator-test-pass')
+        first, second = self.create_invite(), self.create_invite()
+        self.assertEqual(201, self.register('file-owner', first).status_code)
+        self.login('file-owner')
+        session = self.client.post('/api/sessions').json()['id']
+        files = f'/api/sessions/{session}/files'
+        upload = self.client.post(files, params={'name': '明细.csv'}, content='地区,销售额\n华东,128000\n'.encode())
+        self.assertEqual(201, upload.status_code, upload.text)
+        source = upload.json()
+        run = self.client.post(f'/api/sessions/{session}/runs', json={
+            'text': '汇总上传的销售表', 'attachment_ids': [source['id']],
+        })
+        self.assertEqual(202, run.status_code, run.text)
+        events = self.client.get(f"/api/runs/{run.json()['id']}/events").text
+        self.assertIn('地区汇总.csv', events)
+        listed = self.client.get(files).json()
+        artifact, = [item for item in listed if item['kind'] == 'artifact']
+        self.assertIn(source, listed)
+        self.assertIn(artifact['id'], events)
+        preview = f"{files}/{artifact['id']}/preview"
+        download = f"{files}/{artifact['id']}/download"
+        self.assertEqual([['地区', '销售额'], ['华东', '128000']], self.client.get(preview).json()['rows'])
+        self.assertEqual('地区,销售额\n华东,128000\n', self.client.get(download).content.decode())
+        self.assertEqual([source['id']], self.client.get(f'/api/sessions/{session}/messages').json()[0]['attachment_ids'])
+
+        edited = self.client.post(f'/api/sessions/{session}/runs', json={
+            'text': '修改上传的销售表', 'attachment_ids': [source['id']],
+        })
+        self.assertEqual(202, edited.status_code, edited.text)
+        edited_events = self.client.get(f"/api/runs/{edited.json()['id']}/events").text
+        self.assertIn('"status": "completed"', edited_events)
+        copied, = [item for item in self.client.get(files).json() if item['kind'] == 'artifact' and item['name'] == '明细.csv']
+        self.assertIn(copied['id'], edited_events)
+        self.assertIn(b'128000', self.client.get(f"{files}/{source['id']}/download").content)
+        self.assertIn(b'96000', self.client.get(f"{files}/{copied['id']}/download").content)
+
+        self.assertEqual(201, self.register('file-other', second).status_code)
+        self.login('file-other')
+        for url in (files, preview, download):
+            self.assertEqual(404, self.client.get(url).status_code)
+        other_session = self.client.post('/api/sessions').json()['id']
+        invalid = self.client.post(f'/api/sessions/{other_session}/runs', json={
+            'text': '读取文件', 'attachment_ids': [source['id']],
+        })
+        self.assertEqual(422, invalid.status_code)
+
+    def test_preview_formats_and_download_fallback(self):
+        from base64 import b64decode
+        from io import BytesIO
+        from pathlib import Path
+
+        from openpyxl import Workbook
+        from PIL import Image
+        from pptx import Presentation
+        from pypandoc import convert_text
+
+        self.login('operator', 'operator-test-pass')
+        session = self.client.post('/api/sessions').json()['id']
+
+        def upload(name, data):
+            path = f'/api/sessions/{session}/files'
+            response = self.client.post(path, params={'name': name}, content=data)
+            self.assertEqual(201, response.status_code, response.text)
+            return f"{path}/{response.json()['id']}"
+
+        book = Workbook()
+        book.active.append(['工号', '销售额'])
+        book.create_sheet('明细').append(['0017', 128000])
+        data = BytesIO()
+        book.save(data)
+        url = upload('销售.xlsx', data.getvalue())
+        preview = self.client.get(f'{url}/preview', params={'sheet': 1}).json()
+        self.assertEqual(['Sheet', '明细'], preview['sheets'])
+        self.assertEqual([['0017', 128000]], preview['rows'])
+        self.assertEqual(data.getvalue(), self.client.get(f'{url}/download').content)
+
+        png = b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+        url = upload('图像.png', png)
+        response = self.client.get(f'{url}/preview')
+        self.assertEqual('image/png', response.headers['content-type'])
+        self.assertEqual(png, response.content)
+
+        pdf = BytesIO()
+        with Image.new('RGB', (64, 64), 'red') as first, Image.new('RGB', (64, 64), 'blue') as second:
+            first.save(pdf, format='PDF', save_all=True, append_images=[second])
+        url = upload('双页.pdf', pdf.getvalue())
+        response = self.client.get(f'{url}/preview', params={'page': 1})
+        self.assertEqual('image/png', response.headers['content-type'])
+        self.assertEqual('2', response.headers['X-CloudPivot-PDF-Pages'])
+        with Image.open(BytesIO(response.content)) as rendered:
+            red, _, blue = rendered.getpixel((32, 32))
+            self.assertGreater(blue, red)
+        self.assertEqual(pdf.getvalue(), self.client.get(f'{url}/download').content)
+
+        for name, kind, body in [('笔记.txt', 'text', '会议纪要'), ('说明.md', 'markdown', '# 说明')]:
+            url = upload(name, body.encode())
+            self.assertEqual(kind, self.client.get(f'{url}/preview').json()['kind'])
+        long_note = upload('长文本.txt', ('文本' * 80_000).encode('utf-16'))
+        response = self.client.get(f'{long_note}/preview')
+        self.assertEqual(200, response.status_code, response.text[:200])
+        self.assertTrue(response.json()['truncated'])
+        self.assertTrue(response.json()['text'].startswith('文本文本'))
+
+        word = Path(self.enterContext(TemporaryDirectory())) / 'report.docx'
+        convert_text('# 报告', 'docx', format='md', outputfile=str(word))
+        presentation = BytesIO()
+        Presentation().save(presentation)
+        for name, body in [('报告.docx', word.read_bytes()), ('汇报.pptx', presentation.getvalue())]:
+            url = upload(name, body)
+            self.assertEqual(415, self.client.get(f'{url}/preview').status_code)
+            self.assertEqual(body, self.client.get(f'{url}/download').content)
+
+        broken = upload('损坏.xlsx', b'broken spreadsheet')
+        self.assertEqual(422, self.client.get(f'{broken}/preview').status_code)
+        self.assertEqual(b'broken spreadsheet', self.client.get(f'{broken}/download').content)
+        broken_pdf = upload('损坏.pdf', b'%PDF-1.4\n%%EOF\n')
+        self.assertEqual(422, self.client.get(f'{broken_pdf}/preview').status_code)
+
+    def test_daily_limit_changes_apply_to_followers_and_accounts_can_restore_the_default(self):
+        self.login('operator', 'operator-test-pass')
+        invites = [self.create_invite(), self.create_invite()]
+        cap = '/api/ops/quotas'
+        self.assertEqual(200, self.client.patch(cap, json={'daily_limit': 1}).status_code)
+        for name, invite in zip(('quota-default', 'quota-custom'), invites):
+            self.assertEqual(201, self.register(name, invite).status_code)
+        accounts = {row['username']: row for row in self.client.get(cap).json()['accounts']}
+        custom = f"{cap}/{accounts['quota-custom']['id']}"
+        self.assertEqual(200, self.client.patch(custom, json={'daily_limit': 3}).status_code)
+
+        def run(url):
+            response = self.client.post(url, json={'text': '测试用量'})
+            self.assertEqual(202, response.status_code, response.text)
+            self.assertIn('"status": "completed"', self.client.get(f"/api/runs/{response.json()['id']}/events").text)
+
+        self.login('quota-default')
+        first = '/api/sessions/' + self.client.post('/api/sessions').json()['id']
+        run(first + '/runs')
+        self.assertEqual(429, self.client.post(first + '/runs', json={'text': '再试一次'}).status_code)
+        self.assertEqual(200, self.client.get(first + '/messages').status_code)
+        self.assertEqual(200, self.client.get(first + '/files').status_code)
+        self.assertEqual(403, self.client.patch(cap, json={'daily_limit': 5}).status_code)
+        self.assertEqual(403, self.client.patch(custom, json={'daily_limit': None}).status_code)
+        self.assertEqual(403, self.client.patch('/api/ops/models', json={'llm': 'test', 'vlm': 'test'}).status_code)
+
+        self.login('quota-custom')
+        second = '/api/sessions/' + self.client.post('/api/sessions').json()['id']
+        run(second + '/runs')
+        self.login('operator', 'operator-test-pass')
+        self.assertEqual(200, self.client.patch(cap, json={'daily_limit': 0}).status_code)
+        rows = {row['username']: row for row in self.client.get(cap).json()['accounts']}
+        self.assertEqual((1, 0), (rows['quota-default']['used'], rows['quota-default']['effective_limit']))
+        self.assertEqual((1, 3), (rows['quota-custom']['used'], rows['quota-custom']['effective_limit']))
+
+        self.login('quota-custom')
+        run(second + '/runs')
+        self.login('operator', 'operator-test-pass')
+        self.assertEqual(200, self.client.patch(custom, json={'daily_limit': None}).status_code)
+        restored = next(row for row in self.client.get(cap).json()['accounts'] if row['username'] == 'quota-custom')
+        self.assertEqual((2, 0, None), (restored['used'], restored['effective_limit'], restored['daily_limit']))
+        self.login('quota-custom')
+        self.assertEqual(429, self.client.post(second + '/runs', json={'text': '再试一次'}).status_code)
+
+    def test_model_switch_applies_to_the_next_chat_and_image_run(self):
+        from base64 import b64decode
+        from dataclasses import replace
+
+        from api.bootstrap import event_loop
+        from support_chat import TestPlatformChat, TestPlatformVision
+
+        self.clients.close()
+        settings = replace(self.app.state.settings, platform_llms=('chat-a', 'chat-b'), platform_vlms=('vision-a', 'vision-b'))
+        self.enterContext(patch('connection.llm.get_llm', side_effect=lambda name: TestPlatformChat(model_id=name)))
+        self.enterContext(patch('content.tools.vlm_tools.get_vlm', side_effect=lambda name: TestPlatformVision(model_id=name)))
+        self.app = create_app(settings=settings)
+        self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
+        self.login('operator', 'operator-test-pass')
+        models = '/api/ops/models'
+        self.assertEqual('chat-a', self.client.get(models).json()['llm'])
+        self.assertEqual(422, self.client.patch(models, json={'llm': 'unknown', 'vlm': 'vision-a'}).status_code)
+
+        session = '/api/sessions/' + self.client.post('/api/sessions').json()['id']
+        png = b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+        upload = self.client.post(session + '/files', params={'name': '图.png'}, content=png)
+        self.assertEqual(201, upload.status_code, upload.text)
+
+        def start(text, attachments=None):
+            response = self.client.post(session + '/runs', json={'text': text, 'attachment_ids': attachments or []})
+            self.assertEqual(202, response.status_code, response.text)
+            return response.json()['id']
+
+        def events(run):
+            return self.client.get(f'/api/runs/{run}/events').text
+
+        self.assertIn('当前文本模型 chat-a', events(start('你好')))
+        image = [upload.json()['id']]
+        earlier = start('请识别图片', image)
+        self.assertEqual(200, self.client.patch(models, json={'llm': 'chat-b', 'vlm': 'vision-b'}).status_code)
+        self.assertIn('chat-a：视觉模型 vision-a 读取了 PNG', events(earlier))
+        self.assertIn('chat-b：视觉模型 vision-b 读取了 PNG', events(start('请识别图片', image)))
+        self.assertIn('当前文本模型 chat-b', events(start('你好')))
+
+    def test_quota_is_shared_across_parallel_sessions_and_reconnecting_does_not_charge(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.login('operator', 'operator-test-pass')
+        self.assertEqual(200, self.client.patch('/api/ops/quotas', json={'daily_limit': 1}).status_code)
+        sessions = [self.client.post('/api/sessions').json()['id'] for _ in range(2)]
+
+        def start(session):
+            return self.client.post(f'/api/sessions/{session}/runs', json={'text': '请生成文件后等待'})
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(executor.map(start, sessions))
+        self.assertEqual([202, 429], sorted(response.status_code for response in responses))
+        run = next(response.json() for response in responses if response.status_code == 202)
+        duplicate = start(run['session_id'])
+        self.assertEqual(202, duplicate.status_code, duplicate.text)
+        self.assertFalse(duplicate.json()['created'])
+        self.assertEqual(run['id'], duplicate.json()['id'])
+        self.assertEqual(1, self.client.get('/api/ops/quotas').json()['accounts'][0]['used'])
+        self.client.post(f"/api/runs/{run['id']}/stop")
+
     def test_invitation_is_single_use_and_operator_can_see_status(self):
         self.assertEqual(401, self.client.get('/api/auth/me').status_code)
         rejected = self.client.post('/api/auth/login', headers={'Origin': 'https://other.example'}, json={

@@ -11,8 +11,8 @@ from psycopg_pool import PoolTimeout
 from sqlalchemy.exc import OperationalError as DatabaseOperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
-from api import accounts, chat
-from api.bootstrap import AgentFactory, ProgressModelFactory, build_agent, build_progress_model, open_runtime
+from api import accounts, chat, files, platform
+from api.bootstrap import AgentFactory, ProgressModelFactory, build_agent, open_runtime
 from api.settings import WebSettings
 
 
@@ -21,9 +21,6 @@ def create_app(
     progress_model_factory: ProgressModelFactory | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else WebSettings.from_env()
-    if agent_factory is build_agent and progress_model_factory is None:
-        progress_model_factory = build_progress_model
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with open_runtime(settings, agent_factory, progress_model_factory) as runtime:
@@ -37,7 +34,7 @@ def create_app(
         app.add_middleware(
             CORSMiddleware, allow_origins=list(settings.cors_origins),
             allow_credentials=True, allow_methods=['GET', 'POST', 'PATCH'],
-            allow_headers=['Content-Type'],
+            allow_headers=['Content-Type'], expose_headers=[files.PDF_PAGES_HEADER],
         )
 
     @app.middleware('http')
@@ -64,6 +61,8 @@ def create_app(
 
     app.include_router(accounts.router)
     app.include_router(chat.router)
+    app.include_router(files.router)
+    app.include_router(platform.router)
     return app
 
 

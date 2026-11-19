@@ -37,6 +37,11 @@ def _redis_url() -> str:
     return urlunsplit(url._replace(path=url.path or '/1'))
 
 
+def _model_choices(default: str, available: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value for item in (getenv(default, ''), *getenv(available, '').split(','))
+                               if (value := item.strip())))
+
+
 @dataclass(frozen=True)
 class WebSettings:
     database_url: str = field(default='', repr=False)
@@ -44,6 +49,8 @@ class WebSettings:
     cors_origins: tuple[str, ...] = ()
     cookie_secure: bool = True
     session_seconds: int = 7 * 24 * 60 * 60
+    platform_llms: tuple[str, ...] = ()
+    platform_vlms: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.redis_url:
@@ -66,4 +73,6 @@ class WebSettings:
                 if (origin := value.strip())
             ),
             cookie_secure=getenv('CLOUDPIVOT_COOKIE_SECURE', 'true').strip().lower() != 'false',
+            platform_llms=_model_choices('BASE_LLM', 'CLOUDPIVOT_PLATFORM_LLMS'),
+            platform_vlms=_model_choices('BASE_VLM', 'CLOUDPIVOT_PLATFORM_VLMS'),
         )

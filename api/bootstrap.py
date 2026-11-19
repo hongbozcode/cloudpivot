@@ -15,6 +15,8 @@ from sqlalchemy import text
 from api.settings import WebSettings
 from connection.accounts import AccountStore
 from connection.chat import ChatStore
+from connection.files import FileStore
+from connection.platform import PlatformModels, PlatformStore
 from connection.postgres import open_checkpoint_pool, open_database
 from connection.run_cache import RunEvents
 from content.chat_runs import ChatRuns, DeepChatAgent
@@ -30,16 +32,10 @@ def event_loop() -> asyncio.AbstractEventLoop:
     return asyncio.new_event_loop()
 
 
-def build_agent(checkpointer: AsyncPostgresSaver) -> CompiledStateGraph:
+def build_agent(checkpointer: AsyncPostgresSaver, *, model: BaseChatModel | None = None, vlm: str | None = None) -> CompiledStateGraph:
     from content.all_agent import AllAgent
 
-    return AllAgent(checkpointer=checkpointer).agent
-
-
-def build_progress_model() -> BaseChatModel:
-    from connection.llm import get_llm
-
-    return get_llm()
+    return AllAgent(checkpointer=checkpointer, model=model, vlm=vlm).agent
 
 
 @dataclass
@@ -49,6 +45,8 @@ class WebRuntime:
     chat: ChatStore
     runs: ChatRuns
     events: RunEvents
+    files: FileStore
+    platform: PlatformStore
 
 
 @asynccontextmanager
@@ -74,12 +72,33 @@ async def open_runtime(
 
         checkpointer = AsyncPostgresSaver(await stack.enter_async_context(open_checkpoint_pool(settings.database_url)))
         await checkpointer.setup()
-        chat = ChatStore(database)
-        # Legacy tool discovery owns its own event loop and may start a subprocess.
-        graph = await asyncio.to_thread(agent_factory, checkpointer)
+        platform = PlatformStore(database, settings.platform_llms, settings.platform_vlms)
+        chat = ChatStore(database, platform)
         await chat.interrupt_pending()
-        progress_model = progress_model_factory() if progress_model_factory else None
-        runs = ChatRuns(chat, DeepChatAgent(graph), progress_model)
+
+        pinned: dict[PlatformModels, tuple[DeepChatAgent, BaseChatModel | None]] = {}
+        building = asyncio.Lock()
+
+        def configure(models: PlatformModels) -> tuple[DeepChatAgent, BaseChatModel | None]:
+            if agent_factory is build_agent:
+                from connection.llm import get_llm
+
+                model = get_llm(models.llm)
+                graph = build_agent(checkpointer, model=model, vlm=models.vlm)
+                progress = progress_model_factory() if progress_model_factory else model
+            else:
+                graph = agent_factory(checkpointer)
+                progress = progress_model_factory() if progress_model_factory else None
+            return DeepChatAgent(graph), progress
+
+        async def select_agent(models: PlatformModels) -> tuple[DeepChatAgent, BaseChatModel | None]:
+            async with building:
+                if models not in pinned:
+                    # Legacy tool discovery may start a subprocess on its own event loop.
+                    pinned[models] = await asyncio.to_thread(configure, models)
+                return pinned[models]
+
+        runs = ChatRuns(chat, select_agent)
         cache = Redis.from_url(
             settings.redis_url, socket_timeout=0.5, socket_connect_timeout=0.5,
             retry=Retry(NoBackoff(), 0),
@@ -87,4 +106,4 @@ async def open_runtime(
         if cache is not None:
             stack.push_async_callback(cache.aclose)
         stack.push_async_callback(runs.close)
-        yield WebRuntime(settings, AccountStore(database), chat, runs, RunEvents(chat, cache))
+        yield WebRuntime(settings, AccountStore(database), chat, runs, RunEvents(chat, cache), FileStore(database), platform)
