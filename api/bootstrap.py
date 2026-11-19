@@ -13,7 +13,6 @@ from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 from sqlalchemy import text
 
-from api.settings import WebSettings
 from connection.accounts import AccountStore
 from connection.chat import ChatStore
 from connection.files import FileStore
@@ -22,6 +21,7 @@ from connection.platform import PlatformStore
 from connection.postgres import open_checkpoint_pool, open_database
 from connection.run_cache import RunEvents
 from content.chat_runs import ChatRuns, DeepChatAgent
+from core.web_settings import WebSettings
 
 
 AgentFactory = Callable[[AsyncPostgresSaver], CompiledStateGraph]

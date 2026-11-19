@@ -67,7 +67,7 @@ def regular_directory(path: Path, base: Path) -> None:
 
 
 def workspace_manifest(root: Path) -> LegacyWorkspace:
-    from core import config
+    from core import agent_setting as config
 
     entries, files, skills, skill_files = {}, [], [], []
     excluded = (WORKSPACE_NAMESPACE, ORIGINALS_NAMESPACE, ARTIFACT_NAMESPACE, 'builtin-skills')

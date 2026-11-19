@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
 
 from connection.llm import WORKSPACE_CONTEXT
 from content.workspace import get_workspace_root
-from core import config
+from core import agent_setting as config
 from utils.doc_utils import base64_utils, os_utils
 
 

@@ -4,7 +4,7 @@ import requests
 
 from connection import gen_img
 from content.workspace import get_workspace_root
-from core import config
+from core import agent_setting as config
 from utils.doc_utils import base64_utils, download_utils, os_utils
 
 
@@ -15,9 +15,11 @@ def generate_image(prompt: str, image_size: str, reference_image_path: str | Non
     1584x1056 和 1056x1584。结果为工作区内的图片路径。
     """
     try:
-        model, _ = config.require_env(
-            'EDIT_IMAGE_MODEL' if reference_image_path else 'IMAGE_MODEL', 'OPENAI_API_KEY'
+        model_env = (
+            {'EDIT_IMAGE_MODEL': config.settings.edit_image_model} if reference_image_path
+            else {'IMAGE_MODEL': config.settings.image_model}
         )
+        model, key = config.require_values(**model_env, OPENAI_API_KEY=config.settings.openai_api_key)
         root = get_workspace_root()
         reference_image = None
         if reference_image_path:
@@ -25,7 +27,7 @@ def generate_image(prompt: str, image_size: str, reference_image_path: str | Non
             reference_image = base64_utils.file_to_data_uri(reference)
 
         output_dir = os_utils.resolve_within(root / config.GENERATE_IMAGE_PATH, root)
-        image_url = gen_img.gen_img(model, prompt, image_size, reference_image=reference_image)
+        image_url = gen_img.gen_img(model, prompt, image_size, reference_image=reference_image, api_key=key)
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / f'{uuid4().hex}.png'
         download_utils.download_image(image_url, output)

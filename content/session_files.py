@@ -20,7 +20,7 @@ def valid_file_name(name: str) -> bool:
 
 
 def upload_key(file_id: UUID, name: str) -> str:
-    from core.config import USER_UPLOAD_DIR
+    from core.agent_setting import USER_UPLOAD_DIR
 
     return f'/{USER_UPLOAD_DIR}/{file_id}/{name}'
 
@@ -41,7 +41,7 @@ class WorkspaceFile:
     def path(self, session_id: UUID) -> Path:
         if self.run_id is not None:
             return artifact_path(self.run_id, self.id)
-        from core import config
+        from core import agent_setting as config
 
         originals = Path(config.ROOT_PATH_AGENT).resolve() / ORIGINALS_NAMESPACE
         session = originals / str(session_id)

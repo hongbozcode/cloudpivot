@@ -35,7 +35,7 @@ class ConfirmImport(ImportSource):
 
 
 async def review(conn: AsyncConnection, body: ImportSource, base: Path, workspace: Path):
-    from core.config import CONVERSATION_HISTORY_PATH
+    from core.agent_setting import CONVERSATION_HISTORY_PATH
 
     username = (await conn.execute(select(accounts.c.username).where(
         accounts.c.id == body.account_id,
@@ -73,7 +73,7 @@ async def review(conn: AsyncConnection, body: ImportSource, base: Path, workspac
 
 
 def roots(app: Runtime) -> tuple[Path, Path]:
-    from core import config
+    from core import agent_setting as config
 
     workspace = Path(config.ROOT_PATH_AGENT).resolve()
     base = Path(app.settings.legacy_workspace_root).resolve() if app.settings.legacy_workspace_root else workspace

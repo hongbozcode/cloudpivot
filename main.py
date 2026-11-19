@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-from os import getenv
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -13,14 +12,17 @@ from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
 from api import accounts, chat, files, models, platform, workspace_imports
 from api.bootstrap import AgentFactory, ProgressModelFactory, build_agent, open_runtime
-from api.settings import WebSettings
+from core.agent_setting import configure_langsmith
+from core.web_settings import WebSettings
 
 
 def create_app(
     *, settings: WebSettings | None = None, agent_factory: AgentFactory = build_agent,
     progress_model_factory: ProgressModelFactory | None = None,
 ) -> FastAPI:
-    settings = settings if settings is not None else WebSettings.from_env()
+    settings = settings if settings is not None else WebSettings()
+    configure_langsmith()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with open_runtime(settings, agent_factory, progress_model_factory) as runtime:
@@ -75,6 +77,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host='127.0.0.1',
-        port=int(getenv('UVICORN_PORT', '8000')),
+        port=app.state.settings.uvicorn_port,
         loop='api.bootstrap:event_loop',
     )

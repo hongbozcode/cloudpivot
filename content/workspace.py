@@ -4,7 +4,7 @@ from pathlib import Path
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 
-from core import config
+from core import agent_setting as config
 from utils.doc_utils.os_utils import is_link
 
 

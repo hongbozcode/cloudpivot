@@ -13,7 +13,7 @@ ARTIFACT_NAMESPACE = 'run-artifacts-v1'
 
 
 def artifact_path(run_id: UUID, artifact_id: UUID) -> Path:
-    from core import config
+    from core import agent_setting as config
 
     base = Path(config.ROOT_PATH_AGENT).resolve()
     directory = base / ARTIFACT_NAMESPACE
@@ -24,7 +24,7 @@ def artifact_path(run_id: UUID, artifact_id: UUID) -> Path:
 
 
 def _workspace_files(root: Path) -> dict[Path, tuple[int, int, int]]:
-    from core import config
+    from core import agent_setting as config
 
     files = {}
     for path in iter_files(root, exclude=(config.CONVERSATION_HISTORY_PATH, config.SKILL_DIR_PATH)):

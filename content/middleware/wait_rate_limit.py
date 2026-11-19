@@ -1,7 +1,7 @@
 import asyncio
 from openai import RateLimitError
 from langchain.agents.middleware import wrap_model_call
-from core import config
+from core import agent_setting as config
 from utils.general_utils.loggers import logger
 
 @wrap_model_call

@@ -14,7 +14,7 @@ from deepagents.backends.protocol import (
 )
 
 from content.workspace import get_workspace_root
-from core.config import SKILL_DIR_PATH
+from core.agent_setting import SKILL_DIR_PATH
 
 
 class SessionFilesystemBackend(BackendProtocol):

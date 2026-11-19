@@ -9,7 +9,7 @@ from connection.models import PersonalModel
 from content.middleware.model_budget import ModelBudget
 from content.middleware.wait_rate_limit import wait_rate_limit
 from content.tools import write_doc_tools, vlm_tools, gen_img_tools
-from core import config as cfg
+from core import agent_setting as cfg
 from utils.general_utils.loggers import logger
 from utils.langchain_utils import common_utils
 from content.tools import global_tools, read_doc_tools

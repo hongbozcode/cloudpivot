@@ -2,7 +2,7 @@ import asyncio
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from core import config
+from core import agent_setting as config
 
 
 def get_tools():

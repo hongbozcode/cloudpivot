@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 from connection import minio_client
 from content.middleware.run_actions import current_actions
 from content.workspace import WORKSPACE_NAMESPACE, get_workspace_root
-from core import config
+from core import agent_setting as config
 from utils.doc_utils import os_utils, zip_utils
 
 
@@ -34,12 +34,13 @@ class MinioMiddle(AgentMiddleware):
             return None
 
         object_name = f'agent-files-{uuid4().hex}.zip'
+        bucket_name = (config.settings.minio_bucket_name or '').strip()
         with TemporaryDirectory(prefix='cloudpivot-export-') as temp_dir:
             archive = Path(temp_dir) / object_name
             zip_path = zip_utils.zip_folder(root, output_path=str(archive), exclude=excluded_paths)
-            minio_client.create_bucket(config.MINIO_BUCKET_NAME)
+            minio_client.create_bucket(bucket_name)
             return minio_client.upload_file_and_download_url(
-                config.MINIO_BUCKET_NAME, f'{WORKSPACE_NAMESPACE}/{root.name}/{object_name}', zip_path
+                bucket_name, f'{WORKSPACE_NAMESPACE}/{root.name}/{object_name}', zip_path
             )
 
     async def aafter_agent(self, state, runtime):

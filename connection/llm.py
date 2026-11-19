@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 
 from connection.models import PersonalModel
 from connection.public_models import public_clients
-from core import config as cfg
+from core import agent_setting as cfg
 
 
 count_input_tokens = partial(count_tokens_approximately, chars_per_token=2.5)
@@ -49,28 +49,24 @@ def _personal_chat(model: PersonalModel) -> BaseChatModel:
 def get_llm(model_name: str | PersonalModel | None = None):
     if isinstance(model_name, PersonalModel):
         return _personal_chat(model_name)
-    cfg.require_env('OPENAI_API_KEY')
-    llm = ChatOpenAI(
-            model=model_name or cfg.require_env('BASE_LLM')[0],
-            base_url=cfg.MODEL_API_BASE_URL,
-            temperature=0.1,
-        )
-    return llm
+    return _platform_chat(model_name or cfg.settings.base_llm, 'BASE_LLM', temperature=0.1)
+
 
 def get_small_llm():
-    llm = ChatOpenAI(
-            model=cfg.SMALL_LLM,
-            base_url=cfg.MODEL_API_BASE_URL,
-            temperature=0.1,
-        )
-    return llm
+    return _platform_chat(cfg.settings.small_llm, 'SMALL_LLM', temperature=0.1)
+
 
 def get_vlm(model_name: str | PersonalModel | None = None):
     if isinstance(model_name, PersonalModel):
         return _personal_chat(model_name)
-    cfg.require_env('OPENAI_API_KEY')
-    vlm = ChatOpenAI(
-            model=model_name or cfg.require_env('BASE_VLM')[0],
-            base_url=cfg.MODEL_API_BASE_URL,
+    return _platform_chat(model_name or cfg.settings.base_vlm, 'BASE_VLM')
+
+
+def _platform_chat(model: str | None, model_env: str, *, temperature: float | None = None) -> ChatOpenAI:
+    model, key = cfg.require_values(**{model_env: model, 'OPENAI_API_KEY': cfg.settings.openai_api_key})
+    return ChatOpenAI(
+        model=model,
+        api_key=key,
+        base_url=cfg.settings.model_api_base_url or None,
+        temperature=temperature,
     )
-    return vlm

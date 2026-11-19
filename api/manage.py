@@ -4,10 +4,10 @@ from getpass import getpass
 
 from api.accounts import ACCOUNT_PATTERN
 from api.bootstrap import event_loop
-from api.settings import WebSettings
 from connection.accounts import AccountStore, UsernameTaken
 from connection.postgres import open_database
 from core.security import hash_password
+from core.web_settings import WebSettings
 
 
 async def create_operator(database_url: str, username: str, password_hash: str) -> None:
@@ -23,7 +23,7 @@ def main() -> None:
     username = arguments.username.strip().lower()
     if not ACCOUNT_PATTERN.fullmatch(username):
         parser.error('账号为 3–64 个小写字母、数字、下划线、点或短横线，且以字母、数字或下划线开头。')
-    settings = WebSettings.from_env()
+    settings = WebSettings()
     if not settings.database_url:
         parser.error('需要配置 CLOUDPIVOT_DATABASE_URL。')
     password = getpass('密码：')

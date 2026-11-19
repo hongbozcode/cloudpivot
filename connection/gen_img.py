@@ -1,8 +1,7 @@
 import requests
-import os
 
 
-def gen_img(model, prompt,image_size,reference_image=None):
+def gen_img(model, prompt, image_size, reference_image=None, *, api_key: str):
     """
     :param model: 模型
     :param prompt: 提示词
@@ -21,7 +20,7 @@ def gen_img(model, prompt,image_size,reference_image=None):
         payload["image"] = reference_image
 
     headers = {
-        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     } # 请求头，用以指定鉴权
 

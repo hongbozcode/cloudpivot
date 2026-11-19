@@ -8,13 +8,13 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from api.settings import WebSettings
+from core.web_settings import WebSettings
 from main import create_app
 
 
 class AccountChatEndpointTest(unittest.TestCase):
     def test_account_features_require_database_configuration(self):
-        with TestClient(create_app(settings=WebSettings())) as client:
+        with TestClient(create_app(settings=WebSettings(database_url='', redis_url='', _env_file=None))) as client:
             response = client.get('/api/auth/me')
 
         self.assertEqual(503, response.status_code)
@@ -25,7 +25,7 @@ class AccountChatEndpointTest(unittest.TestCase):
             'CLOUDPIVOT_REDIS_URL': '127.0.0.1:6379',
             'CLOUDPIVOT_REDIS_PASSWORD': '',
         }):
-            self.assertEqual('redis://127.0.0.1:6379/1', WebSettings.from_env().redis_url)
+            self.assertEqual('redis://127.0.0.1:6379/1', WebSettings().redis_url)
         with self.assertRaisesRegex(ValueError, 'DB 1'):
             WebSettings(redis_url='redis://127.0.0.1:6379/0')
 
@@ -42,7 +42,7 @@ class AccountChatIntegrationTest(unittest.TestCase):
 
         from api.bootstrap import event_loop
         from api.manage import create_operator
-        from core import config
+        from core import agent_setting as config
         from core.security import hash_password
         from content.all_agent import AllAgent
         from content.workspace import get_workspace_root
@@ -88,6 +88,7 @@ class AccountChatIntegrationTest(unittest.TestCase):
             database_url=test_url,
             redis_url=os.getenv('CLOUDPIVOT_TEST_REDIS_URL', ''),
             cookie_secure=False,
+            _env_file=None,
         )
         self.app = create_app(settings=settings, agent_factory=lambda saver: TestAgent(
             model=TestChatModel(), checkpointer=saver,
@@ -337,7 +338,6 @@ class AccountChatIntegrationTest(unittest.TestCase):
         self.assertEqual(429, self.client.post(second + '/runs', json={'text': '再试一次'}).status_code)
 
     def test_personal_models_use_independent_defaults_and_session_overrides(self):
-        from dataclasses import replace
         from io import BytesIO
 
         from PIL import Image
@@ -346,7 +346,9 @@ class AccountChatIntegrationTest(unittest.TestCase):
         from support_chat import TestPlatformChat
 
         self.clients.close()
-        settings = replace(self.app.state.settings, platform_llms=('platform-chat',), platform_vlms=('platform-vision',))
+        settings = self.app.state.settings.model_copy(update={
+            'platform_llms': ('platform-chat',), 'platform_vlms': ('platform-vision',),
+        })
         self.enterContext(patch('connection.llm.get_llm', side_effect=lambda model: TestPlatformChat(
             model_id=model if isinstance(model, str) else f'{model.model_id}/{model.max_output_tokens}',
         )))
@@ -414,8 +416,6 @@ class AccountChatIntegrationTest(unittest.TestCase):
         self.assertEqual(404, self.client.get(session + '/models').status_code)
 
     def test_personal_input_budget_summarizes_history_and_keeps_recent_requests(self):
-        from dataclasses import replace
-
         import httpx
 
         from api.bootstrap import event_loop
@@ -443,7 +443,9 @@ class AccountChatIntegrationTest(unittest.TestCase):
         self.enterContext(patch('connection.llm.public_clients', side_effect=lambda _base: (
             httpx.Client(transport=mock), httpx.AsyncClient(transport=mock),
         )))
-        settings = replace(self.app.state.settings, platform_llms=('platform',), platform_vlms=('vision',))
+        settings = self.app.state.settings.model_copy(update={
+            'platform_llms': ('platform',), 'platform_vlms': ('vision',),
+        })
         self.app = create_app(settings=settings)
         self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
         self.login('operator', 'operator-test-pass')
@@ -483,13 +485,14 @@ class AccountChatIntegrationTest(unittest.TestCase):
 
     def test_model_switch_applies_to_the_next_chat_and_image_run(self):
         from base64 import b64decode
-        from dataclasses import replace
 
         from api.bootstrap import event_loop
         from support_chat import TestPlatformChat, TestPlatformVision
 
         self.clients.close()
-        settings = replace(self.app.state.settings, platform_llms=('chat-a', 'chat-b'), platform_vlms=('vision-a', 'vision-b'))
+        settings = self.app.state.settings.model_copy(update={
+            'platform_llms': ('chat-a', 'chat-b'), 'platform_vlms': ('vision-a', 'vision-b'),
+        })
         self.enterContext(patch('connection.llm.get_llm', side_effect=lambda name: TestPlatformChat(model_id=name)))
         self.enterContext(patch('content.tools.vlm_tools.get_vlm', side_effect=lambda name: TestPlatformVision(model_id=name)))
         self.app = create_app(settings=settings)

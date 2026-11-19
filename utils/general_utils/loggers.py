@@ -2,7 +2,7 @@
 import logging
 # 导入路径操作库
 import os
-from core import config as cfg
+from core import agent_setting as cfg
 LOG_FILE = os.path.join(cfg.LOG_DIR, 'app.log')
 
 def setup_logging(log_file=LOG_FILE):
