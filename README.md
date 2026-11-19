@@ -2,16 +2,34 @@
 
 ## React 前端 API
 
-在后端目录启动 FastAPI。
+在后端 `.env` 配置默认模型、MinIO 和 CloudPivot 专用 PostgreSQL。数据库连接支持完整
+PostgreSQL URL，也支持 `CLOUDPIVOT_DATABASE_URL=主机:端口` 与独立的
+`CLOUDPIVOT_DATABASE_NAME`、`CLOUDPIVOT_DATABASE_USER`、`CLOUDPIVOT_DATABASE_PASSWORD`。
+FastAPI 启动时通过 SQLAlchemy 初始化业务表，通过 LangGraph PostgreSQL Saver 初始化检查点表。
+Redis 可选，可用 `主机:端口` 或 `redis://主机:端口/1`。缓存只使用 DB 1。
+
+在后端目录安装依赖，然后交互式创建首个运营账号。登录后从工作台进入「用户邀请」生成邀请链接。
 
 ```powershell
-uv run --locked python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+uv sync --locked
+uv run --locked python -m api.manage create-operator operator
+```
+
+本机 HTTP 联调时将 `CLOUDPIVOT_COOKIE_SECURE` 设为 `false`，HTTPS 部署使用默认值 `true`。
+启动 FastAPI，使用一个应用进程连接对应的 PostgreSQL schema。
+
+```powershell
+uv run --locked python -m uvicorn api.main:app --loop api.bootstrap:event_loop --host 127.0.0.1 --port 8000
 ```
 
 `GET /api/health` 返回 `{"status":"ok"}`，用于验证浏览器能访问 FastAPI。
-该接口单独启动，无需模型、数据库或 MinIO。前端默认通过同源 `/api` 访问。
-独立域名部署时，在启动 FastAPI 前设置 `CLOUDPIVOT_CORS_ORIGINS` 为允许的前端源，
+留空数据库配置时可单独验证连通性。前端默认通过同源 `/api` 访问，推荐由前端反向代理。
+同一站点使用独立 API 子域名时，设置 `CLOUDPIVOT_CORS_ORIGINS` 为允许的前端源，
 例如 `https://app.example.com`。多个源使用逗号分隔。
+
+后端测试使用 `uv run --locked python -m unittest discover -s tests -v`。
+设置 `CLOUDPIVOT_TEST_DATABASE_URL` 启用真实 PostgreSQL 集成测试，连接账号须能创建临时 schema。
+可设置 `CLOUDPIVOT_TEST_REDIS_URL` 以同时测试 Redis DB 1，使用以 `/1` 结尾的 Redis URL。
 
 ## 会话工作区
 

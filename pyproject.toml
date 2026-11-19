@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "argon2-cffi>=25.1.0",
     "colorama>=0.4.6",
     "deepagents>=0.7.37",
     "dotenv>=0.9.9",
@@ -16,11 +17,16 @@ dependencies = [
     "langchain-mcp-adapters>=0.3.1",
     "langchain-openai>=1.7.4",
     "langgraph-cli[inmem]>=0.4.42",
+    "langgraph-checkpoint-postgres>=3.0.4",
     "markdown",
     "markitdown[all]>=0.1.9",
     "mcp>=1.24.0,<2",
     "minio>=7.2.20",
     "pypandoc-binary>=1.17",
+    "psycopg[binary,pool]>=3.2",
+    "redis>=6.4",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "uvicorn>=0.34",
 ]
 
 [project.scripts]

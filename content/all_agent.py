@@ -1,5 +1,7 @@
 from deepagents import create_deep_agent
 from langchain.agents.middleware import TodoListMiddleware
+from langchain_core.language_models import BaseChatModel
+from langgraph.types import Checkpointer
 
 from connection.llm import get_llm
 
@@ -18,7 +20,7 @@ from content.workspace_backend import create_workspace_backend
 
 class AllAgent:
 
-    def __init__(self):
+    def __init__(self, *, model: BaseChatModel | None = None, checkpointer: Checkpointer = None):
         skill_root = f'/{cfg.SKILL_DIR_PATH}'
         creator_path = '/builtin-skills/skill-creator/SKILL.md'
         prompt = f'''
@@ -46,7 +48,8 @@ class AllAgent:
         backend = create_workspace_backend()
         skills = [f'{skill_root}/', '/builtin-skills/']
         self.agent = create_deep_agent(
-            model=get_llm(), # 传一个llm
+            model=model if model is not None else get_llm(),
+            checkpointer=checkpointer,
             subagents=self._get_subagent(),  # 子代理传入
             tools=self._get_tools(), # 工具函数列表
             backend=backend,
