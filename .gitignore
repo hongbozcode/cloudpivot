@@ -223,3 +223,10 @@ __marimo__/
 study/
 .langgraph_api
 test*.py
+docs/
+.agents
+ui设计
+.scratch
+AGENTS.md
+PRD.md
+CONTEXT.md
