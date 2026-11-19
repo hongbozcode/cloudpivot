@@ -8,6 +8,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import AIMessage
 
 from connection import minio_client
+from content.middleware.run_actions import current_actions
 from content.workspace import WORKSPACE_NAMESPACE, get_workspace_root
 from core import config
 from utils.doc_utils import os_utils, zip_utils
@@ -42,7 +43,11 @@ class MinioMiddle(AgentMiddleware):
             )
 
     async def aafter_agent(self, state, runtime):
-        download_url = await asyncio.to_thread(self._publish_archive, state['start_time'])
+        def publish():
+            return asyncio.to_thread(self._publish_archive, state['start_time'])
+
+        actions = current_actions.get()
+        download_url = await (actions.execute(publish) if actions else publish())
         if download_url:
             return {'messages': [AIMessage(content=f'[点击下载](<{download_url}>)')]}
         return None

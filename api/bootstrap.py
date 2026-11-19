@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
+from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from redis.asyncio import Redis
@@ -20,6 +21,7 @@ from content.chat_runs import ChatRuns, DeepChatAgent
 
 
 AgentFactory = Callable[[AsyncPostgresSaver], CompiledStateGraph]
+ProgressModelFactory = Callable[[], BaseChatModel]
 
 
 def event_loop() -> asyncio.AbstractEventLoop:
@@ -34,6 +36,12 @@ def build_agent(checkpointer: AsyncPostgresSaver) -> CompiledStateGraph:
     return AllAgent(checkpointer=checkpointer).agent
 
 
+def build_progress_model() -> BaseChatModel:
+    from connection.llm import get_llm
+
+    return get_llm()
+
+
 @dataclass
 class WebRuntime:
     settings: WebSettings
@@ -44,7 +52,9 @@ class WebRuntime:
 
 
 @asynccontextmanager
-async def open_runtime(settings: WebSettings, agent_factory: AgentFactory) -> AsyncIterator[WebRuntime | None]:
+async def open_runtime(
+    settings: WebSettings, agent_factory: AgentFactory, progress_model_factory: ProgressModelFactory | None,
+) -> AsyncIterator[WebRuntime | None]:
     if not settings.database_url:
         yield None
         return
@@ -68,7 +78,8 @@ async def open_runtime(settings: WebSettings, agent_factory: AgentFactory) -> As
         # Legacy tool discovery owns its own event loop and may start a subprocess.
         graph = await asyncio.to_thread(agent_factory, checkpointer)
         await chat.interrupt_pending()
-        runs = ChatRuns(chat, DeepChatAgent(graph))
+        progress_model = progress_model_factory() if progress_model_factory else None
+        runs = ChatRuns(chat, DeepChatAgent(graph), progress_model)
         cache = Redis.from_url(
             settings.redis_url, socket_timeout=0.5, socket_connect_timeout=0.5,
             retry=Retry(NoBackoff(), 0),

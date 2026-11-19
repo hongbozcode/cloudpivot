@@ -12,18 +12,21 @@ from sqlalchemy.exc import OperationalError as DatabaseOperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
 from api import accounts, chat
-from api.bootstrap import AgentFactory, build_agent, open_runtime
+from api.bootstrap import AgentFactory, ProgressModelFactory, build_agent, build_progress_model, open_runtime
 from api.settings import WebSettings
 
 
 def create_app(
     *, settings: WebSettings | None = None, agent_factory: AgentFactory = build_agent,
+    progress_model_factory: ProgressModelFactory | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else WebSettings.from_env()
+    if agent_factory is build_agent and progress_model_factory is None:
+        progress_model_factory = build_progress_model
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with open_runtime(settings, agent_factory) as runtime:
+        async with open_runtime(settings, agent_factory, progress_model_factory) as runtime:
             app.state.runtime = runtime
             yield
 

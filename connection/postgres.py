@@ -24,6 +24,16 @@ async def open_database(database_url: str) -> AsyncIterator[AsyncEngine]:
         async with engine.begin() as conn:
             await conn.execute(text('SELECT pg_advisory_xact_lock(1594950899)'))
             await conn.run_sync(metadata.create_all)
+            constraint = (await conn.execute(text("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conrelid = 'chat_runs'::regclass AND conname = 'chat_run_status'
+            """))).scalar_one()
+            if "'stopped'" not in constraint:
+                await conn.execute(text("""
+                    ALTER TABLE chat_runs DROP CONSTRAINT chat_run_status,
+                    ADD CONSTRAINT chat_run_status
+                    CHECK (status IN ('running', 'completed', 'failed', 'interrupted', 'stopped'))
+                """))
         yield engine
     finally:
         await engine.dispose()

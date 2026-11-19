@@ -46,7 +46,7 @@ chat_runs = Table(
     Column('status', Text, nullable=False, server_default='running'),
     Column('started_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column('finished_at', DateTime(timezone=True)),
-    CheckConstraint("status IN ('running', 'completed', 'failed', 'interrupted')", name='chat_run_status'),
+    CheckConstraint("status IN ('running', 'completed', 'failed', 'interrupted', 'stopped')", name='chat_run_status'),
 )
 chat_messages = Table(
     'chat_messages', metadata,

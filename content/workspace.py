@@ -19,7 +19,8 @@ def get_workspace_root(run_config: RunnableConfig | None = None) -> Path:
         except RuntimeError:
             run_config = {}
 
-    thread_id = run_config.get('configurable', {}).get('thread_id')
+    configurable = run_config.get('configurable', {})
+    thread_id = configurable.get('workspace_id', configurable.get('thread_id'))
     if not isinstance(thread_id, str) or not thread_id.strip():
         raise ValueError('请先创建或选择会话。运行必须提供 configurable.thread_id。')
 

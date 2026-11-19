@@ -6,17 +6,19 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, StringConstraints
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field, StringConstraints, computed_field
 
 from api.accounts import CurrentAccount
 from api.dependencies import Runtime, require_write_origin
-from connection.chat import SessionArchived, SessionRunning
+from connection.chat import RUN_ERRORS, RunNotRetryable, SessionArchived, SessionRunning
 from connection.run_cache import PAGE_SIZE
+from content.run_artifacts import artifact_path
 
 
 router = APIRouter(prefix='/api', dependencies=[Depends(require_write_origin)])
 SESSION_MISSING = '会话不存在或无权访问。'
+RUN_MISSING = '运行不存在或无权访问。'
 
 
 class Session(BaseModel):
@@ -26,12 +28,23 @@ class Session(BaseModel):
     archived_at: datetime | None
 
 
+class Artifact(BaseModel):
+    artifact_id: UUID
+    name: str
+
+
 class Run(BaseModel):
     id: UUID
     session_id: UUID
-    status: Literal['running', 'completed', 'failed', 'interrupted']
+    status: Literal['running', 'completed', 'failed', 'interrupted', 'stopped']
     started_at: datetime
     finished_at: datetime | None
+    artifacts: list[Artifact] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def error(self) -> dict[str, str] | None:
+        return RUN_ERRORS.get(self.status)
 
 
 class StartedRun(Run):
@@ -108,16 +121,68 @@ async def get_messages(session_id: UUID, account: CurrentAccount, app: Runtime) 
 
 @router.post('/sessions/{session_id}/runs', status_code=202, response_model=StartedRun)
 async def start_run(session_id: UUID, body: StartRun, account: CurrentAccount, app: Runtime) -> dict:
+    return await _start_run(session_id, account, app, body.text)
+
+
+@router.get('/sessions/{session_id}/runs', response_model=list[Run])
+async def session_runs(session_id: UUID, account: CurrentAccount, app: Runtime) -> list[dict]:
+    if await app.chat.session(account.id, session_id) is None:
+        raise HTTPException(404, SESSION_MISSING)
+    return await app.chat.session_runs(session_id)
+
+
+async def _start_run(
+    session_id: UUID, account: CurrentAccount, app: Runtime, text: str, *, retry_of: UUID | None = None,
+) -> dict:
     try:
-        result = await app.chat.begin(account.id, session_id, body.text)
+        result = await app.chat.begin(account.id, session_id, text, retry_of=retry_of)
     except SessionArchived as exc:
         raise HTTPException(409, '会话已归档。请新建会话后发送。') from exc
+    except RunNotRetryable as exc:
+        raise HTTPException(409, '当前运行不能重试。') from exc
     if result is None:
         raise HTTPException(404, SESSION_MISSING)
-    run, created = result
+    run, created, prompt = result
     if created:
-        app.runs.start(run['id'], session_id, body.text)
+        app.runs.start(run['id'], session_id, prompt)
     return {**run, 'created': created}
+
+
+async def _owned_run(app: Runtime, account: CurrentAccount, run_id: UUID) -> dict:
+    run = await app.chat.run_for_account(account.id, run_id)
+    if run is None:
+        raise HTTPException(404, RUN_MISSING)
+    return run
+
+
+@router.post('/runs/{run_id}/stop', response_model=Run)
+async def stop_run(run_id: UUID, account: CurrentAccount, app: Runtime) -> dict:
+    run = await _owned_run(app, account, run_id)
+    if run['status'] == 'running':
+        await app.runs.stop(run_id)
+        run = await _owned_run(app, account, run_id)
+    return run
+
+
+@router.post('/runs/{run_id}/retry', status_code=202, response_model=StartedRun)
+async def retry_run(run_id: UUID, account: CurrentAccount, app: Runtime) -> dict:
+    run = await _owned_run(app, account, run_id)
+    return await _start_run(run['session_id'], account, app, '', retry_of=run_id)
+
+
+@router.get('/runs/{run_id}/artifacts/{artifact_id}', response_class=FileResponse)
+async def download_artifact(run_id: UUID, artifact_id: UUID, account: CurrentAccount, app: Runtime) -> FileResponse:
+    await _owned_run(app, account, run_id)
+    name = await app.chat.artifact_name(run_id, artifact_id)
+    try:
+        path = artifact_path(run_id, artifact_id)
+        if name and path.is_file():
+            return FileResponse(path, filename=name, media_type='application/octet-stream', headers={
+                'X-Content-Type-Options': 'nosniff',
+            })
+    except (OSError, ValueError):
+        pass
+    raise HTTPException(404, '产物不存在或无权访问。')
 
 
 @router.get('/runs/{run_id}/events', response_class=StreamingResponse)
@@ -125,8 +190,7 @@ async def stream_run(
     run_id: UUID, account: CurrentAccount, app: Runtime,
     after: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0,
 ) -> Response:
-    if await app.chat.run_for_account(account.id, run_id) is None:
-        raise HTTPException(404, '运行不存在或无权访问。')
+    await _owned_run(app, account, run_id)
 
     async def stream() -> AsyncIterator[str]:
         cursor = after

@@ -14,6 +14,7 @@ from content.tools import global_tools, read_doc_tools
 from content.middleware.command_middle import CommandMiddle
 from content.middleware.file_middle import FileMiddle
 from content.middleware.minio_middle import MinioMiddle
+from content.middleware.run_actions import RunActionsMiddleware
 from content.middleware.skills_middle import WorkspaceSkillsMiddleware
 from content.workspace_backend import create_workspace_backend
 
@@ -61,6 +62,7 @@ class AllAgent:
                 MinioMiddle(),
                 wait_rate_limit,
                 CommandMiddle(),
+                RunActionsMiddleware(),
                 WorkspaceSkillsMiddleware(backend=backend, sources=skills),
             ],
         )

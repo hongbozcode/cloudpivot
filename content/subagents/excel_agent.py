@@ -1,6 +1,7 @@
 from connection import llm
 from content.mcps import excel_mcp
 from content.middleware import file_middle, wait_rate_limit
+from content.middleware.run_actions import RunActionsMiddleware
 
 
 def get_agent():
@@ -12,7 +13,7 @@ def get_agent():
             "新建工作簿时直接使用目标路径，例如 /示例数据.xlsx。"
             "需要定位已有工作簿时，使用 list_workbooks。"
         ),
-        "middleware": [file_middle.FileMiddle(), wait_rate_limit.wait_rate_limit],
+        "middleware": [file_middle.FileMiddle(), wait_rate_limit.wait_rate_limit, RunActionsMiddleware()],
         "tools": excel_mcp.get_tools(),
         "model": llm.get_llm(),
     }
