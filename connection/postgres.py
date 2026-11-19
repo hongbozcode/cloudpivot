@@ -24,6 +24,8 @@ async def open_database(database_url: str) -> AsyncIterator[AsyncEngine]:
         async with engine.begin() as conn:
             await conn.execute(text('SELECT pg_advisory_xact_lock(1594950899)'))
             await conn.run_sync(metadata.create_all)
+            await conn.execute(text('ALTER TABLE session_files ADD COLUMN IF NOT EXISTS workspace_key text'))
+            await conn.execute(text('ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS uses_platform_model boolean NOT NULL DEFAULT true'))
             constraint = (await conn.execute(text("""
                 SELECT pg_get_constraintdef(oid) FROM pg_constraint
                 WHERE conrelid = 'chat_runs'::regclass AND conname = 'chat_run_status'

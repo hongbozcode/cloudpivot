@@ -4,7 +4,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.types import Checkpointer
 
 from connection.llm import get_llm
+from connection.models import PersonalModel
 
+from content.middleware.model_budget import ModelBudget
 from content.middleware.wait_rate_limit import wait_rate_limit
 from content.tools import write_doc_tools, vlm_tools, gen_img_tools
 from core import config as cfg
@@ -21,7 +23,10 @@ from content.workspace_backend import create_workspace_backend
 
 class AllAgent:
 
-    def __init__(self, *, model: BaseChatModel | None = None, vlm: str | None = None, checkpointer: Checkpointer = None):
+    def __init__(
+        self, *, model: BaseChatModel | None = None, vlm: str | PersonalModel | None = None,
+        input_budget: int | None = None, checkpointer: Checkpointer = None,
+    ):
         selected_model = model if model is not None else get_llm()
         self.vlm = vlm
         skill_root = f'/{cfg.SKILL_DIR_PATH}'
@@ -50,15 +55,17 @@ class AllAgent:
 
         backend = create_workspace_backend()
         skills = [f'{skill_root}/', '/builtin-skills/']
+        budget = [ModelBudget(selected_model, backend, input_budget)] if input_budget is not None else []
         self.agent = create_deep_agent(
             model=selected_model,
             checkpointer=checkpointer,
-            subagents=self._get_subagent(selected_model),  # 子代理传入
+            subagents=self._get_subagent(selected_model, budget),  # 子代理传入
             tools=self._get_tools(), # 工具函数列表
             backend=backend,
             skills=skills,
             system_prompt=prompt,
             middleware=[
+                *budget,
                 TodoListMiddleware(),
                 FileMiddle(),
                 MinioMiddle(),
@@ -70,11 +77,11 @@ class AllAgent:
         )
         logger.info("AllAgent 初始化成功")
 
-    def _get_subagent(self, model: BaseChatModel):
+    def _get_subagent(self, model: BaseChatModel, budget: list[ModelBudget]):
         subs = []
         if cfg.USE_EXCEL: # 如果项目开启excel能力则引入excel子代理
             from content.subagents import excel_agent
-            subs.append(excel_agent.get_agent(model))
+            subs.append(excel_agent.get_agent(model, budget))
         return subs
 
 

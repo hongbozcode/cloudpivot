@@ -32,6 +32,11 @@ class WorkspaceFile:
     kind: Literal['source', 'artifact']
     run_id: UUID | None = None
     revision: str | None = None
+    workspace_key: str | None = None
+
+    @property
+    def key(self) -> str:
+        return self.workspace_key or upload_key(self.id, self.name)
 
     def path(self, session_id: UUID) -> Path:
         if self.run_id is not None:
@@ -49,9 +54,13 @@ class WorkspaceFile:
         from content.workspace import get_workspace_root
 
         root = get_workspace_root({'configurable': {'workspace_id': str(session_id)}})
-        path = root / upload_key(self.id, self.name).lstrip('/')
-        if any(is_link(part, missing=False) for part in (path.parent.parent, path.parent, path)):
-            raise ValueError('上传文件必须位于常规目录中。')
+        path = root
+        for part in self.key.lstrip('/').split('/'):
+            if not valid_file_name(part):
+                raise ValueError('工作区文件路径无效。')
+            path /= part
+            if is_link(path, missing=False):
+                raise ValueError('工作区文件必须位于常规目录中。')
         return path
 
     def save(self, session_id: UUID, source: BinaryIO) -> tuple[Path, Path]:

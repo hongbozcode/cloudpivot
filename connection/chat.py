@@ -7,9 +7,9 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from connection.files import attachment_files
-from connection.platform import PlatformModels, PlatformStore
+from connection.models import RunModels
+from connection.platform import PlatformStore
 from connection.schema import chat_messages, chat_run_events, chat_runs, chat_sessions, run_attachments
-from content.session_files import upload_key
 
 
 class SessionArchived(Exception):
@@ -45,7 +45,7 @@ class CompletedContext:
 @dataclass(frozen=True)
 class RunInput:
     text: str
-    models: PlatformModels
+    models: RunModels
 
 
 _session_columns = (chat_sessions.c.id, chat_sessions.c.title, chat_sessions.c.updated_at, chat_sessions.c.archived_at)
@@ -216,10 +216,10 @@ class ChatStore:
                 raise InvalidAttachments from exc
             if len(files) != len(attachment_ids) or unavailable:
                 raise InvalidAttachments
-            models, started_at = await self.platform.admit_run(conn, account_id)
+            models, started_at = await self.platform.admit_run(conn, account_id, session_id)
             run_id = uuid4()
             inserted = await conn.execute(insert(chat_runs).values(
-                id=run_id, session_id=session_id, started_at=started_at,
+                id=run_id, session_id=session_id, started_at=started_at, uses_platform_model=models.uses_platform_model,
             ).returning(chat_runs))
             await conn.execute(insert(chat_messages).values(session_id=session_id, run_id=run_id, role='user', text=text))
             if files:
@@ -227,7 +227,7 @@ class ChatStore:
                     {'run_id': run_id, 'position': index, 'file_id': file.id} for index, file in enumerate(files)
                 ])
                 text += '\n\n本次附件（会话工作区路径）：\n' + '\n'.join(
-                    f'- {upload_key(file.id, file.name)}' for file in files
+                    f'- {file.key}' for file in files
                 )
             await conn.execute(update(chat_sessions).where(chat_sessions.c.id == session_id).values(updated_at=func.now()))
             return dict(inserted.mappings().one()), RunInput(text, models)

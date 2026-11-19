@@ -51,6 +51,7 @@ class WebSettings:
     session_seconds: int = 7 * 24 * 60 * 60
     platform_llms: tuple[str, ...] = ()
     platform_vlms: tuple[str, ...] = ()
+    legacy_workspace_root: str = ''
 
     def __post_init__(self) -> None:
         if self.redis_url:
@@ -75,4 +76,5 @@ class WebSettings:
             cookie_secure=getenv('CLOUDPIVOT_COOKIE_SECURE', 'true').strip().lower() != 'false',
             platform_llms=_model_choices('BASE_LLM', 'CLOUDPIVOT_PLATFORM_LLMS'),
             platform_vlms=_model_choices('BASE_VLM', 'CLOUDPIVOT_PLATFORM_VLMS'),
+            legacy_workspace_root=getenv('CLOUDPIVOT_LEGACY_WORKSPACE_ROOT', '').strip(),
         )

@@ -5,6 +5,7 @@ from uuid import uuid4
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
 
+from connection.llm import WORKSPACE_CONTEXT
 from content.workspace import get_workspace_root
 from core import config
 from utils.doc_utils import base64_utils, os_utils
@@ -91,6 +92,9 @@ class FileMiddle(AgentMiddleware):
             request.state.get('upload_context'),
         )))
         if context:
-            note = HumanMessage(content='下面是应用提供的工作区信息。虚拟根目录为 /。\n' + context)
+            note = HumanMessage(
+                content='下面是应用提供的工作区信息。虚拟根目录为 /。\n' + context,
+                additional_kwargs={WORKSPACE_CONTEXT: True},
+            )
             request = request.override(messages=[note, *request.messages])
         return await handler(request)

@@ -11,7 +11,7 @@ from psycopg_pool import PoolTimeout
 from sqlalchemy.exc import OperationalError as DatabaseOperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
-from api import accounts, chat, files, platform
+from api import accounts, chat, files, models, platform, workspace_imports
 from api.bootstrap import AgentFactory, ProgressModelFactory, build_agent, open_runtime
 from api.settings import WebSettings
 
@@ -63,6 +63,8 @@ def create_app(
     app.include_router(chat.router)
     app.include_router(files.router)
     app.include_router(platform.router)
+    app.include_router(models.router)
+    app.include_router(workspace_imports.router)
     return app
 
 

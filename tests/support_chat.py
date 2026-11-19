@@ -50,6 +50,12 @@ class TestChatModel(BaseChatModel):
             tool_calls[prompt] = ('edit_file', json.dumps({
                 'file_path': path, 'old_string': '128000', 'new_string': '96000',
             }))
+        if prompt == '请使用销售 Skill':
+            if isinstance(messages[-1], HumanMessage) and 'sales' in str(messages[0].content):
+                tool_calls[prompt] = ('read_file', '{"file_path":"/skills/sales/SKILL.md"}')
+            elif 'Check revenue.' in str(messages[-1].content):
+                yield ChatGenerationChunk(message=AIMessageChunk(content='已读取迁入的销售 Skill。'))
+                return
         if isinstance(prompt, str) and prompt in tool_calls and (
             isinstance(messages[-1], HumanMessage) or messages[-1].name == 'get_file_content'
         ):

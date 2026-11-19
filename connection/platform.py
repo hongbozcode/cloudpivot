@@ -6,6 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from connection.models import RunModels, lock_account, resolve_models
 from connection.schema import account_quotas, accounts, chat_runs, chat_sessions, platform_settings
 
 
@@ -33,7 +34,9 @@ def _usage(at: datetime):
     midnight = at.astimezone(QUOTA_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
     return select(chat_sessions.c.account_id, func.count(chat_runs.c.id).label('used')).select_from(
         chat_sessions.join(chat_runs),
-    ).where(chat_runs.c.started_at >= midnight, chat_runs.c.started_at <= at).group_by(chat_sessions.c.account_id)
+    ).where(
+        chat_runs.c.started_at >= midnight, chat_runs.c.started_at <= at, chat_runs.c.uses_platform_model,
+    ).group_by(chat_sessions.c.account_id)
 
 
 class PlatformStore:
@@ -50,9 +53,11 @@ class PlatformStore:
             vlm if vlm in self.vlms else next(iter(self.vlms), None),
         )
 
-    async def models(self) -> PlatformModels:
-        async with self.database.connect() as conn:
+    async def models(self, conn: AsyncConnection | None = None) -> PlatformModels:
+        if conn is not None:
             return self._models((await conn.execute(_settings)).mappings().one_or_none())
+        async with self.database.connect() as connection:
+            return await self.models(connection)
 
     async def save_models(self, models: PlatformModels) -> None:
         await self._save_settings(llm=models.llm, vlm=models.vlm)
@@ -68,7 +73,7 @@ class PlatformStore:
 
     async def save_account_limit(self, account_id: UUID, daily_limit: int | None) -> bool:
         async with self.database.begin() as conn:
-            if not await self._lock_account(conn, account_id):
+            if not await lock_account(conn, account_id):
                 return False
             if daily_limit is None:
                 await conn.execute(delete(account_quotas).where(account_quotas.c.account_id == account_id))
@@ -78,19 +83,19 @@ class PlatformStore:
             return True
 
     @staticmethod
-    async def _lock_account(conn: AsyncConnection, account_id: UUID) -> bool:
-        return (await conn.execute(select(accounts.c.id).where(accounts.c.id == account_id)
-            .with_for_update())).scalar_one_or_none() is not None
-
-    @staticmethod
     def _default_limit(row) -> int:
         return row['daily_limit'] if row is not None and row['daily_limit'] is not None else DEFAULT_DAILY_LIMIT
 
-    async def admit_run(self, conn: AsyncConnection, account_id: UUID) -> tuple[PlatformModels, datetime]:
+    async def admit_run(self, conn: AsyncConnection, account_id: UUID, session_id: UUID) -> tuple[RunModels, datetime]:
         # Hold this lock until the run is inserted so parallel sessions share one allowance.
-        await self._lock_account(conn, account_id)
+        await lock_account(conn, account_id)
         at = datetime.now(timezone.utc)
         settings = (await conn.execute(_settings)).mappings().one_or_none()
+        platform = self._models(settings)
+        selection = await resolve_models(conn, account_id, session_id, RunModels(platform.llm, platform.vlm))
+        models = selection.selected
+        if not models.uses_platform_model:
+            return models, at
         override = (await conn.execute(select(account_quotas.c.daily_limit).where(
             account_quotas.c.account_id == account_id,
         ))).scalar_one_or_none()
@@ -99,7 +104,7 @@ class PlatformStore:
         used = (await conn.execute(statement)).scalar_one_or_none() or 0
         if used >= limit:
             raise DailyLimitReached(used, limit)
-        return self._models(settings), at
+        return models, at
 
     async def quotas(self) -> dict:
         today = _usage(datetime.now(timezone.utc)).subquery()

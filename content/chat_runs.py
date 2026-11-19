@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from connection.chat import ChatStore, CompletedContext, RunInput, TerminalStatus
-from connection.platform import PlatformModels
+from connection.models import RunModels
 from content.middleware.run_actions import RunActions, current_actions
 from content.run_artifacts import RunArtifacts
 from content.run_progress import RunProgress
@@ -61,7 +61,7 @@ class DeepChatAgent:
 class ChatRuns:
     def __init__(
         self, store: ChatStore,
-        select_agent: Callable[[PlatformModels], Awaitable[tuple[DeepChatAgent, BaseChatModel | None]]],
+        select_agent: Callable[[RunModels], Awaitable[tuple[DeepChatAgent, BaseChatModel | None]]],
     ):
         self.store = store
         self.select_agent = select_agent

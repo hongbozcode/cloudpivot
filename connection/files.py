@@ -14,7 +14,7 @@ class ReadOnlyWorkspace(Exception):
     pass
 
 
-_sources = select(session_files.c.id, session_files.c.name)
+_sources = select(session_files.c.id, session_files.c.name, session_files.c.workspace_key)
 _event = chat_run_events.c.data
 _artifacts = select(chat_run_events.c.id, chat_run_events.c.run_id, _event).select_from(chat_run_events.join(chat_runs)).where(
     _event['type'].astext == 'artifact',
@@ -25,7 +25,7 @@ async def attachment_files(conn: AsyncConnection, session_id: UUID, file_ids: li
     if not file_ids:
         return []
     rows = await conn.execute(_sources.where(session_files.c.session_id == session_id, session_files.c.id.in_(file_ids)))
-    by_id = {file_id: WorkspaceFile(file_id, name, 'source') for file_id, name in rows}
+    by_id = {file_id: WorkspaceFile(file_id, name, 'source', workspace_key=key) for file_id, name, key in rows}
     return [by_id[file_id] for file_id in file_ids if file_id in by_id]
 
 
@@ -75,7 +75,10 @@ class FileStore:
             for revision, run_id, event in artifacts:
                 file_id = UUID(event['artifact_id'])
                 outputs[file_id] = WorkspaceFile(file_id, event['name'], 'artifact', run_id, str(revision))
-            return [*(WorkspaceFile(file_id, name, 'source') for file_id, name in sources), *outputs.values()]
+            return [
+                *(WorkspaceFile(file_id, name, 'source', workspace_key=key) for file_id, name, key in sources),
+                *outputs.values(),
+            ]
 
     async def get(self, session_id: UUID, file_id: UUID) -> WorkspaceFile | None:
         async with self.database.connect() as conn:

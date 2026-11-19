@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Identity, Index,
+    BigInteger, Boolean, CheckConstraint, Column, DateTime, ForeignKey, Identity, Index,
     Integer, LargeBinary, MetaData, Table, Text, UniqueConstraint, Uuid, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -53,6 +53,32 @@ chat_sessions = Table(
     Column('updated_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column('archived_at', DateTime(timezone=True)),
 )
+personal_models = Table(
+    'personal_models', metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('account_id', Uuid, ForeignKey('accounts.id'), nullable=False, index=True),
+    Column('kind', Text, nullable=False),
+    Column('api_key', Text, nullable=False),
+    Column('configuration', JSONB, nullable=False),
+    CheckConstraint("kind IN ('llm', 'vlm')", name='personal_model_kind'),
+)
+account_model_defaults = Table(
+    'account_model_defaults', metadata,
+    Column('account_id', Uuid, ForeignKey('accounts.id'), primary_key=True),
+    Column('llm', Uuid, ForeignKey('personal_models.id')),
+    Column('vlm', Uuid, ForeignKey('personal_models.id')),
+)
+session_model_overrides = Table(
+    'session_model_overrides', metadata,
+    Column('session_id', Uuid, ForeignKey('chat_sessions.id'), primary_key=True),
+    Column('llm', Uuid, ForeignKey('personal_models.id')),
+    Column('vlm', Uuid, ForeignKey('personal_models.id')),
+)
+workspace_import_receipts = Table(
+    'workspace_import_receipts', metadata,
+    Column('confirmation', Text, primary_key=True),
+    Column('session_id', Uuid, ForeignKey('chat_sessions.id'), nullable=False),
+)
 chat_runs = Table(
     'chat_runs', metadata,
     Column('id', Uuid, primary_key=True),
@@ -60,6 +86,7 @@ chat_runs = Table(
     Column('status', Text, nullable=False, server_default='running'),
     Column('started_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column('finished_at', DateTime(timezone=True)),
+    Column('uses_platform_model', Boolean, nullable=False, server_default=text('true')),
     CheckConstraint("status IN ('running', 'completed', 'failed', 'interrupted', 'stopped')", name='chat_run_status'),
 )
 chat_messages = Table(
@@ -84,6 +111,7 @@ session_files = Table(
     Column('id', Uuid, primary_key=True),
     Column('session_id', Uuid, ForeignKey('chat_sessions.id'), nullable=False, index=True),
     Column('name', Text, nullable=False),
+    Column('workspace_key', Text),
     Column('created_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 run_attachments = Table(

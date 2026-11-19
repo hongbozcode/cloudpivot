@@ -112,6 +112,67 @@ class AccountChatIntegrationTest(unittest.TestCase):
             'username': username, 'password': 'member-test-pass', 'token': token,
         })
 
+    def test_operator_imports_a_reviewed_legacy_workspace_for_the_target_account(self):
+        from pathlib import Path
+
+        from content.workspace import get_workspace_root
+
+        operator = self.login('operator', 'operator-test-pass')
+        self.register('import-owner', self.create_invite())
+        owner = self.login('import-owner')
+        body = {'source_type': 'session', 'source': 'sales-oct', 'account_id': owner['id']}
+        endpoint = '/api/ops/workspace-imports'
+        self.assertEqual(403, self.client.post(endpoint + '/preview', json=body).status_code)
+        self.login(operator['username'], 'operator-test-pass')
+        self.assertEqual(404, self.client.post(endpoint + '/preview', json=body).status_code)
+        root = get_workspace_root({'configurable': {'thread_id': 'sales-oct'}})
+        skill = root / 'skills' / 'sales' / 'SKILL.md'
+        skill.parent.mkdir(parents=True)
+        skill.write_text('---\nname: sales\ndescription: Sales checks\n---\nCheck revenue.', encoding='utf-8')
+        (skill.parent / 'reference.md').write_text('Sales reference', encoding='utf-8')
+        report = root / 'sales.txt'
+        report.write_bytes(b'old report')
+        history = root / 'conversation_history'
+        history.mkdir()
+        (history / 'old.txt').write_bytes(b'old chat')
+        preview = self.client.post(endpoint + '/preview', json=body)
+        self.assertEqual(200, preview.status_code, preview.text)
+        self.assertEqual(404, self.client.post(endpoint + '/preview', json={**body, 'account_id': str(uuid4())}).status_code)
+        self.assertEqual(['sales.txt'], preview.json()['files'])
+        self.assertEqual(['skills/sales/SKILL.md'], preview.json()['skills'])
+        self.assertEqual(['skills/sales/reference.md'], preview.json()['skill_files'])
+        self.assertEqual(preview.json()['confirmation'], self.client.post(endpoint + '/preview', json={
+            **body, 'source_type': 'directory', 'source': str(root),
+        }).json()['confirmation'])
+        self.assertEqual(422, self.client.post(endpoint + '/preview', json={
+            **body, 'source_type': 'directory', 'source': '   ',
+        }).status_code)
+        report.write_bytes(b'updated report')
+        self.assertEqual(409, self.client.post(endpoint, json={**body, 'confirmation': preview.json()['confirmation']}).status_code)
+        preview = self.client.post(endpoint + '/preview', json=body).json()
+        imported = self.client.post(endpoint, json={**body, 'confirmation': preview['confirmation']})
+        self.assertEqual(201, imported.status_code, imported.text)
+        session_id = imported.json()['session_id']
+        self.assertEqual(session_id, self.client.post(
+            endpoint, json={**body, 'confirmation': preview['confirmation']},
+        ).json()['session_id'])
+        session = f'/api/sessions/{session_id}'
+        self.assertEqual(404, self.client.get(session + '/files').status_code)
+        self.assertEqual(404, self.client.post(endpoint + '/preview', json={
+            **body, 'source': session_id,
+        }).status_code)
+        self.login('import-owner')
+        self.assertEqual([], self.client.get(session + '/messages').json())
+        files = self.client.get(session + '/files').json()
+        file_id = next(file['id'] for file in files if file['name'] == 'sales.txt')
+        self.assertEqual(b'updated report', self.client.get(f'{session}/files/{file_id}/download').content)
+        imported_root = get_workspace_root({'configurable': {'workspace_id': session_id}})
+        self.assertEqual(skill.read_bytes(), (imported_root / Path('skills/sales/SKILL.md')).read_bytes())
+        self.assertFalse((imported_root / 'conversation_history').exists())
+        run = self.client.post(session + '/runs', json={'text': '请使用销售 Skill'})
+        self.assertEqual(202, run.status_code, run.text)
+        self.assertIn('已读取迁入的销售 Skill。', self.client.get(f"/api/runs/{run.json()['id']}/events").text)
+
     def test_uploaded_csv_drives_a_run_and_the_same_artifact_can_be_previewed_and_downloaded(self):
         self.login('operator', 'operator-test-pass')
         first, second = self.create_invite(), self.create_invite()
@@ -274,6 +335,151 @@ class AccountChatIntegrationTest(unittest.TestCase):
         self.assertEqual((2, 0, None), (restored['used'], restored['effective_limit'], restored['daily_limit']))
         self.login('quota-custom')
         self.assertEqual(429, self.client.post(second + '/runs', json={'text': '再试一次'}).status_code)
+
+    def test_personal_models_use_independent_defaults_and_session_overrides(self):
+        from dataclasses import replace
+        from io import BytesIO
+
+        from PIL import Image
+
+        from api.bootstrap import event_loop
+        from support_chat import TestPlatformChat
+
+        self.clients.close()
+        settings = replace(self.app.state.settings, platform_llms=('platform-chat',), platform_vlms=('platform-vision',))
+        self.enterContext(patch('connection.llm.get_llm', side_effect=lambda model: TestPlatformChat(
+            model_id=model if isinstance(model, str) else f'{model.model_id}/{model.max_output_tokens}',
+        )))
+        self.app = create_app(settings=settings)
+        self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
+        self.login('operator', 'operator-test-pass')
+        for username in ('model-owner', 'other-model-user'):
+            self.assertEqual(201, self.register(username, self.create_invite()).status_code)
+        self.login('model-owner')
+        settings_url = '/api/models'
+        secret = 'test-personal-secret'
+        params = {
+            'base_url': 'https://8.8.8.8/v1', 'model_id': 'personal-chat', 'api_key': secret,
+            'input_budget': 32768, 'max_output_tokens': 4096, 'supports_temperature': False, 'temperature': None,
+        }
+        self.assertEqual(422, self.client.post(settings_url, json={
+            **params, 'kind': 'llm', 'base_url': 'https://127.0.0.1/v1',
+        }).status_code)
+        model = self.client.post(settings_url, json={**params, 'kind': 'llm'})
+        self.assertEqual(201, model.status_code, model.text)
+        self.assertTrue(model.json()['has_api_key'])
+        self.assertNotIn(secret, model.text)
+        llm = model.json()['id']
+        vision = self.client.post(settings_url, json={
+            **params, 'kind': 'vlm', 'model_id': 'personal-vision', 'input_budget': 4096,
+        }).json()['id']
+        session = '/api/sessions/' + self.client.post('/api/sessions').json()['id']
+        self.assertEqual('platform-chat', self.client.get(session + '/models').json()['effective']['llm']['model_id'])
+        self.assertEqual(200, self.client.patch(settings_url + '/defaults', json={'llm': llm, 'vlm': None}).status_code)
+        self.assertEqual(200, self.client.patch(session + '/models', json={'vlm': vision}).status_code)
+        effective = self.client.get(session + '/models').json()['effective']
+        self.assertEqual(('account', 'session'), (effective['llm']['source'], effective['vlm']['source']))
+
+        def start():
+            response = self.client.post(session + '/runs', json={'text': '你好'})
+            self.assertEqual(202, response.status_code, response.text)
+            return f"/api/runs/{response.json()['id']}/events"
+
+        earlier = start()
+        saved = self.client.patch(f'{settings_url}/{llm}', json={
+            **params, 'api_key': None, 'model_id': 'updated-chat', 'max_output_tokens': 128,
+        })
+        self.assertEqual(200, saved.status_code, saved.text)
+        self.assertIn('personal-chat/4096', self.client.get(earlier).text)
+        self.assertIn('updated-chat/128', self.client.get(start()).text)
+        image = BytesIO()
+        Image.new('RGB', (2112, 2112)).save(image, format='PNG')
+        upload = self.client.post(session + '/files', params={'name': 'large.png'}, content=image.getvalue())
+        self.assertEqual(201, upload.status_code, upload.text)
+        started = self.client.post(session + '/runs', json={
+            'text': '请识别图片', 'attachment_ids': [upload.json()['id']],
+        })
+        self.assertEqual(202, started.status_code, started.text)
+        self.assertIn('图片理解输入超过配置的预算。', self.client.get(
+            f"/api/runs/{started.json()['id']}/events",
+        ).text)
+        self.assertEqual(200, self.client.patch(session + '/models', json={'llm': llm}).status_code)
+        self.assertEqual({'llm': llm, 'vlm': None}, self.client.patch(
+            session + '/models', json={'vlm': None},
+        ).json()['overrides'])
+        self.assertEqual('platform', self.client.get(session + '/models').json()['effective']['vlm']['source'])
+        self.login('other-model-user')
+        self.assertEqual([], self.client.get(settings_url).json()['models'])
+        self.assertEqual(404, self.client.patch(f'{settings_url}/{llm}', json=params).status_code)
+        self.assertEqual(404, self.client.get(session + '/models').status_code)
+
+    def test_personal_input_budget_summarizes_history_and_keeps_recent_requests(self):
+        from dataclasses import replace
+
+        import httpx
+
+        from api.bootstrap import event_loop
+        from content.workspace import get_workspace_root
+
+        self.clients.close()
+        requests = []
+
+        def provider(request):
+            payload = json.loads(request.content)
+            requests.append(payload)
+            text = '模型回答' if payload.get('tools') else '较早对话的保留摘要'
+            response = {
+                'id': 'local-provider', 'created': 0, 'model': payload['model'],
+                'choices': [{'index': 0, 'finish_reason': 'stop'}],
+            }
+            if payload.get('stream'):
+                response['choices'][0]['delta'] = {'role': 'assistant', 'content': text}
+                return httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                                      content=f'data: {json.dumps(response)}\n\ndata: [DONE]\n\n')
+            response['choices'][0]['message'] = {'role': 'assistant', 'content': text}
+            return httpx.Response(200, json=response)
+
+        mock = httpx.MockTransport(provider)
+        self.enterContext(patch('connection.llm.public_clients', side_effect=lambda _base: (
+            httpx.Client(transport=mock), httpx.AsyncClient(transport=mock),
+        )))
+        settings = replace(self.app.state.settings, platform_llms=('platform',), platform_vlms=('vision',))
+        self.app = create_app(settings=settings)
+        self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
+        self.login('operator', 'operator-test-pass')
+        profile = self.client.post('/api/models', json={
+            'kind': 'llm', 'base_url': 'https://8.8.8.8/v1', 'model_id': 'compat-text', 'api_key': 'test-api-key',
+            'input_budget': 12000, 'max_output_tokens': 256, 'supports_temperature': True, 'temperature': 0.4,
+        })
+        self.assertEqual(201, profile.status_code, profile.text)
+        self.assertEqual(200, self.client.patch('/api/models/defaults', json={'llm': profile.json()['id']}).status_code)
+        session = self.client.post('/api/sessions').json()['id']
+
+        def turn(prompt):
+            started = self.client.post(f'/api/sessions/{session}/runs', json={'text': prompt})
+            self.assertEqual(202, started.status_code, started.text)
+            events = self.client.get(f"/api/runs/{started.json()['id']}/events").text
+            lifecycle = [json.loads(line[6:]) for line in events.splitlines() if line.startswith('data: ')]
+            self.assertEqual('completed', lifecycle[-1]['status'], events)
+
+        for index in range(6):
+            turn(f'old-history-{index} ' + 'earlier details ' * 335)
+        turn('最近一个请求')
+        root = get_workspace_root({'configurable': {'workspace_id': session}})
+        root.mkdir(parents=True, exist_ok=True)
+        for index in range(600):
+            (root / f'wide-workspace-entry-{index:04d}-{"x" * 45}.txt').touch()
+        turn('当前最终任务')
+        last = next(payload for payload in reversed(requests) if payload.get('tools'))
+        messages = [str(message['content']) for message in last['messages']]
+        self.assertTrue(any('较早对话的保留摘要' in message for message in messages))
+        self.assertIn('最近一个请求', messages)
+        self.assertIn('当前最终任务', messages)
+        self.assertFalse(any(message.startswith('old-history-0') for message in messages))
+        self.assertFalse(any('wide-workspace-entry-0000' in message for message in messages))
+        self.assertEqual(256, last['max_tokens'])
+        self.assertEqual(0.4, last['temperature'])
+        self.assertNotIn('max_completion_tokens', last)
 
     def test_model_switch_applies_to_the_next_chat_and_image_run(self):
         from base64 import b64decode
