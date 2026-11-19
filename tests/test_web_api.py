@@ -2,8 +2,8 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from api.main import create_app
 from api.settings import WebSettings
+from main import create_app
 
 
 class HealthEndpointTest(unittest.TestCase):

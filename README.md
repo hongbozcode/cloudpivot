@@ -19,8 +19,11 @@ uv run --locked python -m api.manage create-operator operator
 启动 FastAPI，使用一个应用进程连接对应的 PostgreSQL schema。
 
 ```powershell
-uv run --locked python -m uvicorn api.main:app --loop api.bootstrap:event_loop --host 127.0.0.1 --port 8000
+uv run --locked python main.py
 ```
+
+在 PyCharm 中选择项目的 `.venv` 解释器，直接运行根目录的 `main.py`。服务默认监听
+`127.0.0.1:8000`，可在运行配置的环境变量中设置 `UVICORN_PORT` 更换端口。
 
 `GET /api/health` 返回 `{"status":"ok"}`，用于验证浏览器能访问 FastAPI。
 留空数据库配置时可单独验证连通性。前端默认通过同源 `/api` 访问，推荐由前端反向代理。

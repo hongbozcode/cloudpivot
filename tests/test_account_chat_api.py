@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from api.main import create_app
 from api.settings import WebSettings
+from main import create_app
 
 
 class AccountChatEndpointTest(unittest.TestCase):
