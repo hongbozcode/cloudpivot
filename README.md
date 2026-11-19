@@ -1,5 +1,18 @@
 # cloudpivot
 
+## React 前端 API
+
+在后端目录启动 FastAPI。
+
+```powershell
+uv run --locked python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+`GET /api/health` 返回 `{"status":"ok"}`，用于验证浏览器能访问 FastAPI。
+该接口单独启动，无需模型、数据库或 MinIO。前端默认通过同源 `/api` 访问。
+独立域名部署时，在启动 FastAPI 前设置 `CLOUDPIVOT_CORS_ORIGINS` 为允许的前端源，
+例如 `https://app.example.com`。多个源使用逗号分隔。
+
 ## 会话工作区
 
 在 LangGraph Studio 或 Agent Chat UI 中创建会话后发送消息。直接调用图时，请传入
