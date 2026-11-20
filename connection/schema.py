@@ -74,6 +74,15 @@ session_model_overrides = Table(
     Column('llm', Uuid, ForeignKey('personal_models.id')),
     Column('vlm', Uuid, ForeignKey('personal_models.id')),
 )
+mcp_connections = Table(
+    'mcp_connections', metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('account_id', Uuid, ForeignKey('accounts.id'), nullable=False, index=True),
+    Column('name', Text, nullable=False),
+    Column('url', Text, nullable=False),
+    Column('catalog_id', Uuid),
+    Column('tools', JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+)
 workspace_import_receipts = Table(
     'workspace_import_receipts', metadata,
     Column('confirmation', Text, primary_key=True),
@@ -105,6 +114,13 @@ chat_run_events = Table(
     Column('id', BigInteger, Identity(always=True), primary_key=True),
     Column('run_id', Uuid, ForeignKey('chat_runs.id'), nullable=False),
     Column('data', JSONB, nullable=False),
+)
+tool_approvals = Table(
+    'tool_approvals', metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('run_id', Uuid, ForeignKey('chat_runs.id'), nullable=False, index=True),
+    Column('status', Text, nullable=False, server_default='pending'),
+    CheckConstraint("status IN ('pending', 'approved', 'rejected', 'cancelled')", name='tool_approval_status'),
 )
 session_files = Table(
     'session_files', metadata,

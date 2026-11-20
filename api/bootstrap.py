@@ -16,6 +16,7 @@ from sqlalchemy import text
 from connection.accounts import AccountStore
 from connection.chat import ChatStore
 from connection.files import FileStore
+from connection.mcp_connections import McpConnections
 from connection.models import PersonalModel, RunModels
 from connection.platform import PlatformStore
 from connection.postgres import open_checkpoint_pool, open_database
@@ -52,6 +53,7 @@ class WebRuntime:
     events: RunEvents
     files: FileStore
     platform: PlatformStore
+    mcp: McpConnections
 
 
 @asynccontextmanager
@@ -115,4 +117,7 @@ async def open_runtime(
         if cache is not None:
             stack.push_async_callback(cache.aclose)
         stack.push_async_callback(runs.close)
-        yield WebRuntime(settings, AccountStore(database), chat, runs, RunEvents(chat, cache), FileStore(database), platform)
+        yield WebRuntime(
+            settings, AccountStore(database), chat, runs, RunEvents(chat, cache), FileStore(database), platform,
+            McpConnections(database),
+        )

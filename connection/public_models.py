@@ -13,7 +13,7 @@ def public_address(host: str, port: int) -> str:
     try:
         addresses = [ip_address(entry[4][0]) for entry in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
     except (OSError, ValueError) as exc:
-        raise ValueError('无法解析模型服务地址。') from exc
+        raise ValueError('无法解析服务地址。') from exc
     if not addresses or any(
         not address.is_global or address.is_multicast or address.is_reserved
         or (address.version == 6 and (
@@ -21,27 +21,34 @@ def public_address(host: str, port: int) -> str:
         ))
         for address in addresses
     ):
-        raise ValueError('模型服务必须解析到公网地址。')
+        raise ValueError('服务必须解析到公网地址。')
     return str(addresses[0])
 
 
 def validate_base_url(value: str) -> str:
+    return validate_public_https_url(value).rstrip('/')
+
+
+def validate_public_https_url(value: str, *, allow_query: bool = False) -> str:
     if any(char.isspace() or not char.isprintable() or char == '\\' for char in value):
-        raise ValueError('请输入有效的模型服务 Base URL。')
+        raise ValueError('请输入有效的服务地址。')
     raw = urlsplit(value)
-    parsed = httpx.URL(value)
+    try:
+        parsed = httpx.URL(value)
+    except httpx.InvalidURL as exc:
+        raise ValueError('请输入有效的服务地址。') from exc
     if (
         parsed.scheme != 'https' or not parsed.host or raw.username is not None
-        or parsed.query or parsed.fragment or '?' in value or '#' in value
+        or parsed.port == 0 or '#' in value or (not allow_query and '?' in value)
     ):
-        raise ValueError('请输入公网 HTTPS Base URL，地址中不能包含凭据、查询参数或片段。')
+        raise ValueError('请输入不含凭据和片段的公网 HTTPS 地址。')
     public_address(parsed.raw_host.decode('ascii'), parsed.port or 443)
-    return str(parsed).rstrip('/')
+    return str(parsed)
 
 
 def _target(request: httpx.Request, base: httpx.URL) -> tuple[str, int]:
     if (request.url.scheme, request.url.raw_host, request.url.port) != (base.scheme, base.raw_host, base.port):
-        raise httpx.ConnectError('模型服务请求超出了配置地址。', request=request)
+        raise httpx.ConnectError('请求超出了配置的服务地址。', request=request)
     return base.raw_host.decode('ascii'), base.port or 443
 
 
@@ -63,7 +70,7 @@ class PublicModelTransport(httpx.HTTPTransport):
         return super().handle_request(_pinned(request, host, public_address(host, port)))
 
 
-class AsyncPublicModelTransport(httpx.AsyncHTTPTransport):
+class AsyncPublicTransport(httpx.AsyncHTTPTransport):
     def __init__(self, base: httpx.URL):
         super().__init__(trust_env=False, limits=httpx.Limits(max_keepalive_connections=0))
         self.base = base
@@ -78,5 +85,5 @@ def public_clients(base_url: str) -> tuple[httpx.Client, httpx.AsyncClient]:
     base = httpx.URL(base_url)
     return (
         httpx.Client(transport=PublicModelTransport(base), trust_env=False),
-        httpx.AsyncClient(transport=AsyncPublicModelTransport(base), trust_env=False),
+        httpx.AsyncClient(transport=AsyncPublicTransport(base), trust_env=False),
     )

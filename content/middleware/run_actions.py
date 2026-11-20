@@ -1,12 +1,15 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
 from langchain.agents.middleware import AgentMiddleware
 
 from content.run_progress import RunProgress
+
+if TYPE_CHECKING:
+    from content.middleware.remote_tools import RunRemoteTools
 
 T = TypeVar('T')
 
@@ -17,6 +20,7 @@ class RunActions:
     def __init__(self):
         self.accepting = True
         self.progress: RunProgress | None = None
+        self.remote_tools: RunRemoteTools | None = None
         self.pending: set[asyncio.Future] = set()
 
     async def execute(self, operation: Callable[[], Awaitable[T]]) -> T:

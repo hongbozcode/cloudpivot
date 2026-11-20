@@ -113,6 +113,126 @@ class AccountChatIntegrationTest(unittest.TestCase):
             'username': username, 'password': 'member-test-pass', 'token': token,
         })
 
+    def test_remote_mcp_connection_belongs_to_the_account(self):
+        self.login('operator', 'operator-test-pass')
+        for username in ('mcp-owner', 'mcp-other'):
+            self.assertEqual(201, self.register(username, self.create_invite()).status_code)
+
+        self.login('mcp-owner')
+        endpoint = '/api/mcp/connections'
+        for address in (
+            'http://8.8.8.8/mcp', 'https://127.0.0.1/mcp', 'https://[::1]/mcp',
+            'https://8.8.8.8:invalid/mcp', 'https://user@8.8.8.8/mcp',
+        ):
+            self.assertEqual(422, self.client.post(endpoint, json={'name': '测试服务', 'url': address}).status_code)
+        body = {'name': '测试服务', 'url': 'https://8.8.8.8/mcp'}
+        response = self.client.post(endpoint, json=body)
+        self.assertEqual(201, response.status_code, response.text)
+        connection = response.json()
+        self.assertEqual([], connection['tools'])
+        self.assertEqual([connection], self.client.get(endpoint).json())
+
+        self.login('mcp-other')
+        self.assertEqual([], self.client.get(endpoint).json())
+        url = f"{endpoint}/{connection['id']}"
+        self.assertEqual(404, self.client.patch(url, json=body).status_code)
+        self.assertEqual(404, self.client.post(f'{url}/test').status_code)
+
+    def test_remote_mcp_approval_controls_the_actual_call_and_pins_settings(self):
+        import httpx
+
+        from api.bootstrap import event_loop
+        from content.all_agent import AllAgent
+        from support_chat import ControlledMcp, RemoteToolChat, listen_for_event
+
+        self.clients.close()
+        self.app = create_app(settings=self.app.state.settings, agent_factory=lambda saver: AllAgent(
+            model=RemoteToolChat(), checkpointer=saver,
+        ).agent)
+        self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
+        remote = ControlledMcp()
+        calls = remote.calls
+        self.enterContext(patch.object(httpx.AsyncHTTPTransport, 'handle_async_request', side_effect=remote.respond))
+        self.login('operator', 'operator-test-pass')
+        for username in ('mcp-caller', 'mcp-bystander'):
+            self.assertEqual(201, self.register(username, self.create_invite()).status_code)
+        self.login('mcp-caller')
+        settings = '/api/mcp/connections'
+        service = {'name': '销售系统', 'url': 'https://8.8.8.8/unavailable'}
+        connection = settings + '/' + self.client.post(settings, json=service).json()['id']
+        self.assertEqual(502, self.client.post(connection + '/test').status_code)
+        service['url'] = 'https://8.8.8.8/mcp'
+        self.assertEqual(200, self.client.patch(connection, json=service).status_code)
+        discovered = self.client.post(connection + '/test')
+        self.assertEqual(200, discovered.status_code, discovered.text)
+        tool, = discovered.json()['tools']
+        self.assertEqual(('sales', False, 'confirm'), (tool['name'], tool['enabled'], tool['approval']))
+
+        def configure(enabled, approval=None):
+            tool = {'name': 'sales', 'enabled': enabled}
+            if approval:
+                tool['approval'] = approval
+            response = self.client.patch(connection + '/tools', json={
+                'catalog_id': discovered.json()['catalog_id'], 'tools': [tool],
+            })
+            self.assertEqual(200, response.status_code, response.text)
+
+        session = '/api/sessions/' + self.client.post('/api/sessions').json()['id']
+
+        def start():
+            response = self.client.post(session + '/runs', json={'text': '查询十月销售'})
+            self.assertEqual(202, response.status_code, response.text)
+            return f"/api/runs/{response.json()['id']}"
+
+        def pending(run):
+            event = listen_for_event(self.client, self.app, run + '/events', 'tool_approval')
+            self.assertEqual(('pending', '销售系统', 'sales'), (event['status'], event['service'], event['tool']))
+            self.assertEqual('十月', event['arguments']['month'])
+            self.assertNotIn('private-test-token', json.dumps(event))
+            return f"{run}/approvals/{event['tool_id']}"
+
+        configure(True)
+        first = start()
+        approval = pending(first)
+        self.assertEqual([], calls)
+        self.login('mcp-bystander')
+        self.assertEqual(404, self.client.get(first + '/events').status_code)
+        self.assertEqual(404, self.client.patch(connection + '/tools', json={
+            'catalog_id': discovered.json()['catalog_id'], 'tools': [{'name': 'sales', 'enabled': False}],
+        }).status_code)
+        self.assertEqual(404, self.client.post(approval, json={'decision': 'approved'}).status_code)
+        self.login('mcp-caller')
+        configure(True, 'automatic')
+        for _ in range(2):
+            self.assertEqual(200, self.client.post(approval, json={'decision': 'approved'}).status_code)
+        replay = self.client.get(first + '/events').text
+        self.assertIn('"status": "approved"', replay)
+        self.assertIn('"status": "completed"', replay)
+        self.assertNotIn('private-test-token', replay)
+        self.assertEqual([{'name': 'sales', 'arguments': {
+            'month': '十月', 'api_key': 'private-test-token',
+        }}], calls)
+
+        automatic = start()
+        configure(False)
+        self.assertNotIn('"type": "tool_approval"', self.client.get(automatic + '/events').text)
+        self.assertEqual(2, len(calls))
+        self.client.get(start() + '/events')
+        self.assertEqual(2, len(calls))
+
+        configure(True)
+        rejected = start()
+        self.assertEqual(200, self.client.post(pending(rejected), json={'decision': 'rejected'}).status_code)
+        self.assertIn('"status": "rejected"', self.client.get(rejected + '/events').text)
+        self.assertEqual(2, len(calls))
+
+        stopped = start()
+        approval = pending(stopped)
+        self.assertEqual('stopped', self.client.post(stopped + '/stop').json()['status'])
+        self.assertEqual(409, self.client.post(approval, json={'decision': 'approved'}).status_code)
+        self.assertIn('"status": "cancelled"', self.client.get(stopped + '/events').text)
+        self.assertEqual(2, len(calls))
+
     def test_operator_imports_a_reviewed_legacy_workspace_for_the_target_account(self):
         from pathlib import Path
 

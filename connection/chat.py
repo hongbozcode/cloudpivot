@@ -7,9 +7,11 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from connection.files import attachment_files
+from connection.mcp_connections import RemoteTool, enabled_remote_tools
 from connection.models import RunModels
 from connection.platform import PlatformStore
 from connection.schema import chat_messages, chat_run_events, chat_runs, chat_sessions, run_attachments
+from connection.tool_approvals import ToolApprovals, cancel_pending_approvals
 
 
 class SessionArchived(Exception):
@@ -46,6 +48,7 @@ class CompletedContext:
 class RunInput:
     text: str
     models: RunModels
+    remote_tools: tuple[RemoteTool, ...]
 
 
 _session_columns = (chat_sessions.c.id, chat_sessions.c.title, chat_sessions.c.updated_at, chat_sessions.c.archived_at)
@@ -56,6 +59,7 @@ class ChatStore:
     def __init__(self, database: AsyncEngine, platform: PlatformStore):
         self.database = database
         self.platform = platform
+        self.approvals = ToolApprovals(database)
 
     async def create_session(self, account_id: UUID) -> dict:
         async with self.database.begin() as conn:
@@ -217,6 +221,7 @@ class ChatStore:
             if len(files) != len(attachment_ids) or unavailable:
                 raise InvalidAttachments
             models, started_at = await self.platform.admit_run(conn, account_id, session_id)
+            remote_tools = await enabled_remote_tools(conn, account_id)
             run_id = uuid4()
             inserted = await conn.execute(insert(chat_runs).values(
                 id=run_id, session_id=session_id, started_at=started_at, uses_platform_model=models.uses_platform_model,
@@ -230,7 +235,7 @@ class ChatStore:
                     f'- {file.key}' for file in files
                 )
             await conn.execute(update(chat_sessions).where(chat_sessions.c.id == session_id).values(updated_at=func.now()))
-            return dict(inserted.mappings().one()), RunInput(text, models)
+            return dict(inserted.mappings().one()), RunInput(text, models, remote_tools)
 
     async def append_event(self, run_id: UUID, data: dict) -> None:
         async with self.database.begin() as conn:
@@ -258,6 +263,7 @@ class ChatStore:
             .returning(chat_runs.c.id, chat_runs.c.session_id, chat_runs.c.finished_at))).mappings()
         event_text = chat_run_events.c.data['text'].astext
         for run in runs:
+            await cancel_pending_approvals(conn, run['id'])
             answer = select(
                 literal(run['session_id']), literal(run['id']), literal('assistant'),
                 func.string_agg(event_text, aggregate_order_by(literal(''), chat_run_events.c.id)),

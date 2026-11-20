@@ -14,6 +14,7 @@ from api.dependencies import Runtime, require_write_origin
 from connection.chat import RUN_ERRORS, InvalidAttachments, RunNotRetryable, SessionArchived, SessionRunning
 from connection.platform import DailyLimitReached
 from connection.run_cache import PAGE_SIZE
+from connection.tool_approvals import ApprovalClosed, Decision
 from content.run_artifacts import artifact_path
 
 
@@ -76,6 +77,10 @@ class StartRun(BaseModel):
         strip_whitespace=True, min_length=1, max_length=20_000, pattern=r'^[^\x00]+$',
     )]
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=10)
+
+
+class ToolApprovalDecision(BaseModel):
+    decision: Decision
 
 
 @router.get('/sessions', response_model=list[Session])
@@ -170,6 +175,20 @@ async def stop_run(run_id: UUID, account: CurrentAccount, app: Runtime) -> dict:
         await app.runs.stop(run_id)
         run = await _owned_run(app, account, run_id)
     return run
+
+
+@router.post('/runs/{run_id}/approvals/{tool_id}')
+async def decide_tool_approval(
+    run_id: UUID, tool_id: UUID, body: ToolApprovalDecision, account: CurrentAccount, app: Runtime,
+) -> dict[str, Decision]:
+    await _owned_run(app, account, run_id)
+    try:
+        status = await app.runs.decide_approval(run_id, tool_id, body.decision)
+    except ApprovalClosed:
+        raise HTTPException(409, '该工具调用已处理或运行已结束。') from None
+    if status is None:
+        raise HTTPException(404, '工具审批不存在。')
+    return {'status': status}
 
 
 @router.post('/runs/{run_id}/retry', status_code=202, response_model=StartedRun)

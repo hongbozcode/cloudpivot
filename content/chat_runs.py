@@ -13,6 +13,8 @@ from langgraph.graph.state import CompiledStateGraph
 
 from connection.chat import ChatStore, CompletedContext, RunInput, TerminalStatus
 from connection.models import RunModels
+from connection.tool_approvals import Decision
+from content.middleware.remote_tools import RunRemoteTools
 from content.middleware.run_actions import RunActions, current_actions
 from content.run_artifacts import RunArtifacts
 from content.run_progress import RunProgress
@@ -82,6 +84,9 @@ class ChatRuns:
             self.stops[run_id] = stopping
         await asyncio.shield(stopping)
 
+    async def decide_approval(self, run_id: UUID, tool_id: UUID, decision: Decision) -> Decision | None:
+        return await self.store.approvals.decide(run_id, tool_id, decision, stopping=lambda: run_id in self.stops)
+
     async def _stop(self, run_id: UUID) -> None:
         try:
             if task := self.tasks.get(run_id):
@@ -108,6 +113,8 @@ class ChatRuns:
             if not await self.store.is_running(run_id):
                 return
             publish = partial(self.store.append_event, run_id)
+            if run_input.remote_tools:
+                actions.remote_tools = RunRemoteTools(run_input.remote_tools, self.store.approvals, run_id, publish)
             async with asyncio.timeout(300):
                 agent, progress_model = await self.select_agent(run_input.models)
                 context = await self.store.completed_context(session_id)
