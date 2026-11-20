@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ class RunActions:
         self.accepting = True
         self.progress: RunProgress | None = None
         self.remote_tools: RunRemoteTools | None = None
+        self.personal_skills: Path | None = None
         self.pending: set[asyncio.Future] = set()
 
     async def execute(self, operation: Callable[[], Awaitable[T]]) -> T:

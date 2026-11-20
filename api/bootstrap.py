@@ -21,6 +21,7 @@ from connection.models import PersonalModel, RunModels
 from connection.platform import PlatformStore
 from connection.postgres import open_checkpoint_pool, open_database
 from connection.run_cache import RunEvents
+from connection.skills import SkillLibrary
 from content.chat_runs import ChatRuns, DeepChatAgent
 from core.web_settings import WebSettings
 
@@ -54,6 +55,7 @@ class WebRuntime:
     files: FileStore
     platform: PlatformStore
     mcp: McpConnections
+    skills: SkillLibrary
 
 
 @asynccontextmanager
@@ -119,5 +121,5 @@ async def open_runtime(
         stack.push_async_callback(runs.close)
         yield WebRuntime(
             settings, AccountStore(database), chat, runs, RunEvents(chat, cache), FileStore(database), platform,
-            McpConnections(database),
+            McpConnections(database), SkillLibrary(database),
         )

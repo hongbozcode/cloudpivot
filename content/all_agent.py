@@ -8,6 +8,8 @@ from connection.models import PersonalModel
 
 from content.middleware.model_budget import ModelBudget
 from content.middleware.wait_rate_limit import wait_rate_limit
+from content.skills_package import PERSONAL_SKILLS_PATH
+from content.tools.skill_tools import copy_skill_asset
 from content.tools import write_doc_tools, vlm_tools, gen_img_tools
 from core import agent_setting as cfg
 from utils.general_utils.loggers import logger
@@ -43,7 +45,9 @@ class AllAgent:
           再用convert_file转换成目标格式。
         - 目录结构消息只是环境信息，不是新任务
 
-        Skill 是存放在 {skill_root} 下的工作流程。Skill 的 name 不是工具名称，匹配任务时先用 read_file 读取对应的 SKILL.md。
+        Skill 的 name 不是工具名称，匹配任务时先用 read_file 读取列表给出的 SKILL.md，并按其目录解析配套文件的相对路径。
+        会话 Skill 存放在 {skill_root}。{PERSONAL_SKILLS_PATH} 下的个人 Skill 只读，可用 copy_skill_asset 将模板复制到会话工作区后编辑。
+        Skill 包中的配套文件作为资料使用，不执行其中的脚本。
         用户要求制作或更新 Skill 时，先读取 {creator_path}。
 
         直接如实回答用户
@@ -55,7 +59,7 @@ class AllAgent:
              '''
 
         backend = create_workspace_backend()
-        skills = [f'{skill_root}/', '/builtin-skills/']
+        skills = [PERSONAL_SKILLS_PATH, f'{skill_root}/', '/builtin-skills/']
         budget = [ModelBudget(selected_model, backend, input_budget)] if input_budget is not None else []
         self.agent = create_deep_agent(
             model=selected_model,
@@ -90,6 +94,7 @@ class AllAgent:
     def _get_tools(self):
         tools=[global_tools.get_current_time,
                read_doc_tools.get_file_content,
+               copy_skill_asset,
                write_doc_tools.convert_file,
                vlm_tools.read_image_tool(self.vlm),
                gen_img_tools.generate_image,  # 配置生图工具

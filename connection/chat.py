@@ -11,6 +11,7 @@ from connection.mcp_connections import RemoteTool, enabled_remote_tools
 from connection.models import RunModels
 from connection.platform import PlatformStore
 from connection.schema import chat_messages, chat_run_events, chat_runs, chat_sessions, run_attachments
+from connection.skills import enabled_skill_packages
 from connection.tool_approvals import ToolApprovals, cancel_pending_approvals
 
 
@@ -49,6 +50,7 @@ class RunInput:
     text: str
     models: RunModels
     remote_tools: tuple[RemoteTool, ...]
+    personal_skills: tuple[tuple[str, bytes], ...]
 
 
 _session_columns = (chat_sessions.c.id, chat_sessions.c.title, chat_sessions.c.updated_at, chat_sessions.c.archived_at)
@@ -222,6 +224,7 @@ class ChatStore:
                 raise InvalidAttachments
             models, started_at = await self.platform.admit_run(conn, account_id, session_id)
             remote_tools = await enabled_remote_tools(conn, account_id)
+            personal_skills = await enabled_skill_packages(conn, account_id)
             run_id = uuid4()
             inserted = await conn.execute(insert(chat_runs).values(
                 id=run_id, session_id=session_id, started_at=started_at, uses_platform_model=models.uses_platform_model,
@@ -235,7 +238,7 @@ class ChatStore:
                     f'- {file.key}' for file in files
                 )
             await conn.execute(update(chat_sessions).where(chat_sessions.c.id == session_id).values(updated_at=func.now()))
-            return dict(inserted.mappings().one()), RunInput(text, models, remote_tools)
+            return dict(inserted.mappings().one()), RunInput(text, models, remote_tools, personal_skills)
 
     async def append_event(self, run_id: UUID, data: dict) -> None:
         async with self.database.begin() as conn:

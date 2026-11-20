@@ -96,6 +96,10 @@ async def preview_file(
     file: ResolvedFile, sheet: Annotated[int, Query(ge=0)] = 0, page: Annotated[int, Query(ge=0)] = 0,
 ):
     path, name = file
+    return await render_file_preview(path, name, sheet, page)
+
+
+async def render_file_preview(path: Path, name: str, sheet: int, page: int, *, binary: bytes | None = None):
     try:
         preview = await asyncio.to_thread(make_preview, path, Path(name).suffix.lower(), sheet, page)
     except Exception as exc:
@@ -107,7 +111,8 @@ async def preview_file(
         return Response(preview.png, media_type='image/png', headers={**FILE_HEADERS, PDF_PAGES_HEADER: str(preview.page_count)})
     if isinstance(preview, str):
         # The workbench fetches bytes. Opening this URL directly must also be safe.
-        return FileResponse(path, filename=name, media_type=preview, headers={
-            **FILE_HEADERS, 'Content-Security-Policy': "sandbox; default-src 'none'",
-        })
+        headers = {**FILE_HEADERS, 'Content-Security-Policy': "sandbox; default-src 'none'"}
+        if binary is not None:
+            return Response(binary, media_type=preview, headers=headers)
+        return FileResponse(path, filename=name, media_type=preview, headers=headers)
     return preview

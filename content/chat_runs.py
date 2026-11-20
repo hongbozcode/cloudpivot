@@ -5,6 +5,8 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from functools import partial
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
@@ -18,6 +20,7 @@ from content.middleware.remote_tools import RunRemoteTools
 from content.middleware.run_actions import RunActions, current_actions
 from content.run_artifacts import RunArtifacts
 from content.run_progress import RunProgress
+from content.skills_package import materialize_skills
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,7 @@ class ChatRuns:
         actions = RunActions()
         token = current_actions.set(actions)
         artifacts = None
+        skill_directory = None
         try:
             if not await self.store.is_running(run_id):
                 return
@@ -116,6 +120,11 @@ class ChatRuns:
             if run_input.remote_tools:
                 actions.remote_tools = RunRemoteTools(run_input.remote_tools, self.store.approvals, run_id, publish)
             async with asyncio.timeout(300):
+                if run_input.personal_skills:
+                    skill_directory = TemporaryDirectory(prefix='cloudpivot-skills-')
+                    skill_root = Path(skill_directory.name)
+                    await actions.execute(lambda: asyncio.to_thread(materialize_skills, skill_root, run_input.personal_skills))
+                    actions.personal_skills = skill_root
                 agent, progress_model = await self.select_agent(run_input.models)
                 context = await self.store.completed_context(session_id)
                 capture = RunArtifacts(run_id, session_id, publish)
@@ -133,7 +142,7 @@ class ChatRuns:
             logger.warning('Agent run %s failed (%s)', run_id, type(exc).__name__)
             status = 'failed'
         finally:
-            settlement = asyncio.create_task(self._settle(run_id, actions, artifacts))
+            settlement = asyncio.create_task(self._settle(run_id, actions, artifacts, skill_directory))
             try:
                 await asyncio.shield(settlement)
             except asyncio.CancelledError:
@@ -146,10 +155,19 @@ class ChatRuns:
         except Exception as exc:
             logger.error('Could not persist run %s status %s (%s)', run_id, status, type(exc).__name__)
 
-    async def _settle(self, run_id: UUID, actions: RunActions, artifacts: RunArtifacts | None) -> None:
+    async def _settle(
+        self, run_id: UUID, actions: RunActions, artifacts: RunArtifacts | None,
+        skill_directory: TemporaryDirectory | None,
+    ) -> None:
         try:
             await actions.drain()
             if artifacts is not None:
                 await artifacts.capture()
         except Exception as exc:
             logger.warning('Could not capture artifacts for run %s (%s)', run_id, type(exc).__name__)
+        finally:
+            if skill_directory is not None:
+                try:
+                    await asyncio.to_thread(skill_directory.cleanup)
+                except OSError as exc:
+                    logger.warning('Could not clean up personal skills for run %s (%s)', run_id, type(exc).__name__)

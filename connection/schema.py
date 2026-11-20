@@ -83,6 +83,18 @@ mcp_connections = Table(
     Column('catalog_id', Uuid),
     Column('tools', JSONB, nullable=False, server_default=text("'[]'::jsonb")),
 )
+personal_skills = Table(
+    'personal_skills', metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('account_id', Uuid, ForeignKey('accounts.id'), nullable=False),
+    Column('name', Text, nullable=False),
+    Column('description', Text, nullable=False),
+    Column('enabled', Boolean, nullable=False, server_default=text('false')),
+    Column('bundle', LargeBinary, nullable=False),
+    Column('revision', Text, nullable=False),
+    Column('source_session_id', Uuid, ForeignKey('chat_sessions.id')),
+    UniqueConstraint('account_id', 'name'),
+)
 workspace_import_receipts = Table(
     'workspace_import_receipts', metadata,
     Column('confirmation', Text, primary_key=True),

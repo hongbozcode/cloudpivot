@@ -13,6 +13,8 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 
+from content.middleware.run_actions import current_actions
+from content.skills_package import PERSONAL_SKILLS_PATH
 from content.workspace import get_workspace_root
 from core.agent_setting import SKILL_DIR_PATH
 
@@ -74,22 +76,34 @@ class SessionFilesystemBackend(BackendProtocol):
         return self._backend().download_files(paths)
 
 
-class BuiltinSkillsBackend(FilesystemBackend):
-    """Serve the packaged skills without copying them into every workspace."""
+class ReadOnlySkillsBackend(FilesystemBackend):
+    """Serve packaged and personal skills as read-only resources."""
 
     def write(self, file_path: str, content: str):
-        return WriteResult(error='内置 Skill 只读。请在 /skills 下创建会话 Skill。')
+        return WriteResult(error='此处的 Skill 只读。请在 /skills 下创建会话 Skill。')
 
     def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False):
-        return EditResult(error='内置 Skill 只读。请在 /skills 下创建会话 Skill。')
+        return EditResult(error='此处的 Skill 只读。请在 /skills 下创建会话 Skill。')
 
     def delete(self, file_path: str):
-        return DeleteResult(error='内置 Skill 只读。')
+        return DeleteResult(error='此处的 Skill 只读。')
 
     def upload_files(self, files: list[tuple[str, bytes]]):
         return [FileUploadResponse(path=path, error='permission_denied') for path, _ in files]
 
 
 def create_workspace_backend() -> CompositeBackend:
-    builtin = BuiltinSkillsBackend(root_dir=Path(__file__).parent / 'skills', virtual_mode=True)
-    return CompositeBackend(default=SessionFilesystemBackend(), routes={'/builtin-skills/': builtin})
+    builtin = ReadOnlySkillsBackend(root_dir=Path(__file__).parent / 'skills', virtual_mode=True)
+    return CompositeBackend(default=SessionFilesystemBackend(), routes={
+        '/builtin-skills/': builtin, PERSONAL_SKILLS_PATH: PersonalSkillsBackend(),
+    })
+
+
+class PersonalSkillsBackend(SessionFilesystemBackend):
+    @staticmethod
+    def _backend() -> ReadOnlySkillsBackend:
+        actions = current_actions.get()
+        root = actions.personal_skills if actions is not None else None
+        return ReadOnlySkillsBackend(
+            root_dir=root or Path(__file__).with_name('unmounted-personal-skills'), virtual_mode=True,
+        )

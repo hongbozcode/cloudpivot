@@ -24,11 +24,13 @@ class MinioMiddle(AgentMiddleware):
     def before_agent(self, state, runtime):
         return {'start_time': time.time()}
 
-    def _publish_archive(self, start_time):
+    def _publish_archive(self, start_time, *, exclude_session_skills=False):
         root = get_workspace_root()
         if not root.is_dir():
             return None
         excluded_paths = (config.USER_UPLOAD_DIR, config.CONVERSATION_HISTORY_PATH)
+        if exclude_session_skills:
+            excluded_paths += (config.SKILL_DIR_PATH,)
         latest_time = os_utils.get_latest_modification_time(root, exclude=excluded_paths)
         if latest_time is None or latest_time <= start_time:
             return None
@@ -44,10 +46,11 @@ class MinioMiddle(AgentMiddleware):
             )
 
     async def aafter_agent(self, state, runtime):
-        def publish():
-            return asyncio.to_thread(self._publish_archive, state['start_time'])
-
         actions = current_actions.get()
+
+        def publish():
+            return asyncio.to_thread(self._publish_archive, state['start_time'], exclude_session_skills=actions is not None)
+
         download_url = await (actions.execute(publish) if actions else publish())
         if download_url:
             return {'messages': [AIMessage(content=f'[点击下载](<{download_url}>)')]}

@@ -90,8 +90,9 @@ class AccountChatIntegrationTest(unittest.TestCase):
             cookie_secure=False,
             _env_file=None,
         )
+        self.chat_model = TestChatModel
         self.app = create_app(settings=settings, agent_factory=lambda saver: TestAgent(
-            model=TestChatModel(), checkpointer=saver,
+            model=self.chat_model(), checkpointer=saver,
         ).agent, progress_model_factory=TestChatModel)
         self.clients = self.enterContext(ExitStack())
         self.client = self.clients.enter_context(TestClient(self.app, backend_options={'loop_factory': event_loop}))
@@ -112,6 +113,126 @@ class AccountChatIntegrationTest(unittest.TestCase):
         return self.client.post('/api/auth/register', json={
             'username': username, 'password': 'member-test-pass', 'token': token,
         })
+
+    def test_imported_skills_are_private_and_pinned_for_the_running_agent(self):
+        from io import BytesIO
+        from zipfile import ZipFile
+
+        from support_chat import SkillChat
+
+        self.chat_model = SkillChat
+        self.enterContext(patch('content.middleware.minio_middle.MinioMiddle._publish_archive', return_value=None))
+        self.login('operator', 'operator-test-pass')
+        for username in ('skill-owner', 'skill-other'):
+            self.assertEqual(201, self.register(username, self.create_invite()).status_code)
+        self.login('skill-owner')
+        library = '/api/skills'
+        plain = b'---\nname: weekly\ndescription: Weekly notes\n---\nWeekly checklist.'
+        reply = self.client.post(library, params={'name': 'SKILL.md'}, content=plain)
+        self.assertEqual(201, reply.status_code, reply.text)
+        self.assertEqual(plain.decode(), self.client.get(f"{library}/{reply.json()['id']}").json()['markdown'])
+
+        archive = BytesIO()
+        with ZipFile(archive, 'w') as bundle:
+            bundle.writestr('monthly/SKILL.md', b'---\nname: monthly\ndescription: Monthly summary\n---\nRead references/checklist.txt.')
+            bundle.writestr('monthly/references/checklist.txt', b'Private monthly checklist.')
+        reply = self.client.post(library, params={'name': 'monthly.zip'}, content=archive.getvalue())
+        self.assertEqual(201, reply.status_code, reply.text)
+        skill = f"{library}/{reply.json()['id']}"
+        asset = skill + '/asset?path=references/checklist.txt'
+        self.assertEqual('Private monthly checklist.', self.client.get(asset).json()['text'])
+        self.assertFalse(reply.json()['enabled'])
+        self.assertEqual(422, self.client.post(library, params={'name': 'SKILL.md'}, content=b'Invalid').status_code)
+        malformed = plain.replace(b'---\nWeekly', b'metadata: {created: 2026-99-99}\n---\nWeekly')
+        self.assertEqual(422, self.client.post(library, params={'name': 'SKILL.md'}, content=malformed).status_code)
+        for path in ('../escaped.txt', '汉' * 100 + '.txt'):
+            with ZipFile(archive := BytesIO(), 'w') as bundle:
+                bundle.writestr('SKILL.md', plain)
+                bundle.writestr(path, b'invalid')
+            self.assertEqual(422, self.client.post(library, params={'name': 'bad.zip'}, content=archive.getvalue()).status_code)
+
+        self.assertTrue(self.client.patch(skill, json={'enabled': True}).json()['enabled'])
+        session = self.client.post('/api/sessions').json()['id']
+        run = self.client.post(f'/api/sessions/{session}/runs', json={'text': '等待后使用月报 Skill'})
+        self.assertEqual(202, run.status_code, run.text)
+        self.assertTrue(self.writer_started.wait(timeout=8))
+        try:
+            self.assertFalse(self.client.patch(skill, json={'enabled': False}).json()['enabled'])
+        finally:
+            self.finish_writing.set()
+        self.assertIn('已读取个人月报资料', self.client.get(f"/api/runs/{run.json()['id']}/events").text)
+
+        self.login('skill-other')
+        self.assertEqual([], self.client.get(library).json())
+        for response in (self.client.get(skill), self.client.get(asset), self.client.patch(skill, json={'enabled': True})):
+            self.assertEqual(404, response.status_code)
+        self.assertIn('个人月报 Skill 不可用', self.run_skill_task('使用个人月报 Skill'))
+        self.login('skill-owner')
+        self.assertIn('个人月报 Skill 不可用', self.run_skill_task('使用个人月报 Skill'))
+        self.assertTrue(self.client.patch(skill, json={'enabled': True}).json()['enabled'])
+        self.assertIn('已读取个人月报资料', self.run_skill_task('使用个人月报 Skill'))
+        target = self.client.post('/api/sessions').json()['id']
+        self.assertIn('已复制月报资料', self.run_skill_task('复制月报资料', target))
+        files = f'/api/sessions/{target}/files'
+        reference = next(file for file in self.client.get(files).json() if file['name'] == 'checklist.txt')
+        self.assertEqual(b'Private monthly checklist.', self.client.get(f"{files}/{reference['id']}/download").content)
+
+    def run_skill_task(self, text, session=None):
+        session = session or self.client.post('/api/sessions').json()['id']
+        run = self.client.post(f'/api/sessions/{session}/runs', json={'text': text})
+        self.assertEqual(202, run.status_code, run.text)
+        return self.client.get(f"/api/runs/{run.json()['id']}/events").text
+
+    def test_session_skill_is_refreshed_during_the_run_and_published_explicitly(self):
+        from support_chat import SkillChat
+
+        self.chat_model = SkillChat
+        publish_archive = self.enterContext(patch('content.middleware.minio_middle.minio_client.create_bucket'))
+        self.login('operator', 'operator-test-pass')
+        for username in ('session-skill-owner', 'session-skill-other'):
+            self.assertEqual(201, self.register(username, self.create_invite()).status_code)
+        self.login('session-skill-owner')
+        session = self.client.post('/api/sessions').json()['id']
+        library = '/api/skills'
+        skills = f'/api/sessions/{session}/skills'
+        skill = skills + '/monthly-report'
+
+        self.assertIn('已试用新月报流程', self.run_skill_task('创建月报 Skill 并试用', session))
+        self.assertEqual('monthly-report', self.client.get(skills).json()[0]['name'])
+        draft = self.client.get(skill).json()
+        self.assertIn('Monthly workflow: draft', draft['markdown'])
+        self.assertEqual([], self.client.get(library).json())
+        self.assertIn('月报流程不可用', self.run_skill_task('使用已发布的月报 Skill'))
+
+        self.assertIn('已试用更新后的月报流程', self.run_skill_task('更新月报 Skill 并试用', session))
+        detail = self.client.get(skill).json()
+        self.assertIn('Monthly workflow: revised', detail['markdown'])
+        self.assertFalse(detail['published'])
+        self.assertEqual(409, self.client.post(skill + '/publish', json={'revision': draft['revision']}).status_code)
+        publication = {'revision': detail['revision']}
+        self.assertEqual(['references/steps.txt'], [asset['path'] for asset in detail['assets']])
+        asset_url = skill + '/asset?path=references/steps.txt'
+        self.assertEqual('地区汇总模板', self.client.get(asset_url).json()['text'])
+
+        self.login('session-skill-other')
+        for response in (self.client.get(skills), self.client.get(skill), self.client.get(asset_url),
+                         self.client.post(skill + '/publish', json=publication)):
+            self.assertEqual(404, response.status_code)
+        self.login('session-skill-owner')
+        reply = self.client.post(skill + '/publish', json=publication)
+        self.assertEqual(201, reply.status_code, reply.text)
+        saved = reply.json()
+        self.assertTrue(self.client.get(skill).json()['published'])
+        self.assertEqual(saved, self.client.post(skill + '/publish', json=publication).json())
+        self.assertFalse(saved['enabled'])
+        personal = f"{library}/{saved['id']}"
+        download = self.client.get(f'{personal}/asset?path=references/steps.txt&download=true')
+        self.assertEqual('地区汇总模板'.encode(), download.content)
+        self.assertIn('attachment', download.headers['content-disposition'])
+        self.assertIn('月报流程不可用', self.run_skill_task('使用已发布的月报 Skill'))
+        self.assertTrue(self.client.patch(personal, json={'enabled': True}).json()['enabled'])
+        self.assertIn('已读取发布后的月报流程', self.run_skill_task('使用已发布的月报 Skill'))
+        publish_archive.assert_not_called()
 
     def test_remote_mcp_connection_belongs_to_the_account(self):
         self.login('operator', 'operator-test-pass')

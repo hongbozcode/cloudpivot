@@ -97,6 +97,66 @@ class TestPlatformChat(TestChatModel):
         yield ChatGenerationChunk(message=AIMessageChunk(content=answer))
 
 
+class SkillChat(TestChatModel):
+    @staticmethod
+    def call(name, **arguments):
+        return ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[{
+            'name': name, 'args': json.dumps(arguments), 'id': f'skill-{name}', 'index': 0,
+        }]))
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        prompt = next(message.content for message in reversed(messages) if isinstance(message, HumanMessage))
+        if prompt in ('创建月报 Skill 并试用', '更新月报 Skill 并试用', '使用已发布的月报 Skill'):
+            yield self.session_skill(messages, prompt)
+            return
+        if prompt not in ('等待后使用月报 Skill', '使用个人月报 Skill', '复制月报资料'):
+            async for chunk in super()._astream(messages, stop, run_manager, **kwargs):
+                yield chunk
+            return
+        last = messages[-1]
+        if prompt == '等待后使用月报 Skill' and isinstance(last, HumanMessage):
+            yield self.call('write_slow_report')
+            return
+        if last.name == 'read_file':
+            answer = '已读取个人月报资料' if 'Private monthly checklist.' in last.text else '个人月报资料读取失败'
+        elif last.name == 'copy_skill_asset':
+            answer = '已复制月报资料' if '/checklist.txt' in last.text else '月报资料复制失败'
+        elif '/personal-skills/monthly/SKILL.md' in messages[0].text:
+            reference = '/personal-skills/monthly/references/checklist.txt'
+            if prompt == '复制月报资料':
+                yield self.call('copy_skill_asset', source_path=reference, destination_path='/checklist.txt')
+            else:
+                yield self.call('read_file', file_path=reference)
+            return
+        else:
+            answer = '个人月报 Skill 不可用'
+        yield ChatGenerationChunk(message=AIMessageChunk(content=answer))
+
+    def session_skill(self, messages, prompt):
+        last = messages[-1]
+        reused = prompt == '使用已发布的月报 Skill'
+        updated = prompt == '更新月报 Skill 并试用'
+        path = ('/personal-skills/' if reused else '/skills/') + 'monthly-report/SKILL.md'
+        if isinstance(last, HumanMessage) and not reused:
+            if updated:
+                return self.call('edit_file', file_path=path, old_string='Monthly workflow: draft', new_string='Monthly workflow: revised')
+            return self.call('write_file', file_path=path, content=(
+                '---\nname: monthly-report\ndescription: "Monthly workflow: draft"\n---\n# 月报整理\n按地区汇总收入。'
+            ))
+        if last.name == 'write_file' and path in messages[0].text:
+            return self.call('write_file', file_path='/skills/monthly-report/references/steps.txt', content='地区汇总模板') if (
+                'references/steps.txt' not in last.text
+            ) else self.call('read_file', file_path=path)
+        revision = 'revised' if updated or reused else 'draft'
+        if last.name == 'read_file' and revision in last.text:
+            answer = '已读取发布后的月报流程' if reused else ('已试用更新后的月报流程' if updated else '已试用新月报流程')
+        elif path in messages[0].text and f'Monthly workflow: {revision}' in messages[0].text:
+            return self.call('read_file', file_path=path)
+        else:
+            answer = '月报流程不可用'
+        return ChatGenerationChunk(message=AIMessageChunk(content=answer))
+
+
 class TestPlatformVision(TestChatModel):
     model_id: str
 

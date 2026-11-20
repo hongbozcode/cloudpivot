@@ -15,6 +15,7 @@ TOOL_LABELS = {
     'glob': '查找文件',
     'grep': '搜索文件内容',
     'write_file': '写入文件',
+    'copy_skill_asset': '复制技能资料',
     'edit_file': '编辑文件',
     'convert_file': '转换文档',
     'read_image': '分析图像',
